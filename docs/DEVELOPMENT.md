@@ -36,7 +36,7 @@
 | `openmimic_rollout.py` | 롤아웃 실행기 — lerobot-rollout 을 같은 프로세스에서 돌리며 실시간 상태(카메라·관절·추론 ms·Hz)를 `RUN_DIR/<jid>/` 에 씀. `--openmimic.engine=ov` 면 openmimic_ov 로 신경망 교체 |
 | `openmimic_hub.py` | Hugging Face Hub — 로그인 상태(whoami 캐시)·하드웨어 목록, 데이터셋 올리기/받기, 모델 받기, HF Jobs 클라우드 학습 래퍼 |
 | `tools_dsrepair.py` | 마무리 안 된(끊긴) 데이터셋 복구 — huggingface/leLab `dataset_repair.py`(Apache-2.0)를 옮겨 와 백업·CLI 추가 |
-| `openmimic_ov.py` | ACT → OpenVINO 변환·검증(`convert`), 장치 조회(`devices`), OpenVINO 추론으로 lerobot-rollout 실행(`rollout`). OpenMimic 은 이 파일을 별도 프로세스로 띄웁니다 |
+| `openmimic_ov.py` | ACT·ACT2 → OpenVINO 변환·검증(`convert`), 장치 조회(`devices`), OpenVINO 추론으로 lerobot-rollout 실행(`rollout`). OpenMimic 은 이 파일을 별도 프로세스로 띄웁니다 |
 | `tools_jscheck.py` | 모든 페이지의 인라인 JS 를 `node --check` 로 파싱 검증 (`--en` 이면 영어 치환 후 검증) |
 | `openmimic_i18n_en.json` | 영어 화면 사전 — 한국어 조각 → 영어 (한/EN 버튼) |
 | `tools_simarms.py` | 가상 팔 — PTY 위에서 STS3215 / Dynamixel X 를 흉내. 켜 있으면 `openmimic_sim.json` 에 포트를 알리고 OpenMimic 포트 목록에 추가됨 |

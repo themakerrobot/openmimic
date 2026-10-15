@@ -1,6 +1,10 @@
 <h1 align="center">OpenMimic</h1>
 
 <p align="center">
+  <b>한국어</b> · <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
   <b>로봇팔 셋업 · 데이터 수집 · 학습 · 실행을 웹 화면 하나로</b><br>
   SO-ARM101 · ROBOTIS OMX · 한팔 / 양팔 · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU
 </p>
@@ -276,5 +280,5 @@ python tools_simarms.py --robot omx   --mode single      # OMX 한팔
 - 코드: MIT — [LICENSE](LICENSE)
 - `urdf/` SO-101 URDF·STL: [TheRobotStudio SO-ARM100](https://github.com/TheRobotStudio/SO-ARM100) (Apache 2.0) — [urdf/LICENSE.md](urdf/LICENSE.md)
 - `urdf/omx_f.urdf`, `urdf/open_manipulator_description/`: [ROBOTIS open_manipulator](https://github.com/ROBOTIS-GIT/open_manipulator) (Apache 2.0) — [urdf/LICENSE-omx.md](urdf/LICENSE-omx.md)
-- `plugins/`: lerobot `bi_so_follower` / `bi_so_leader` 구조를 따른 코드 (Apache 2.0)
+- `plugins/`: 양팔 OMX 는 lerobot `bi_so_follower` / `bi_so_leader` 구조를 따르고, ACT2 는 lerobot ACT 를 바탕으로 한 코드 (Apache 2.0)
 - `tools_dsrepair.py`: [huggingface/leLab](https://github.com/huggingface/leLab) `dataset_repair.py` 를 옮겨 고친 코드 (Apache 2.0, 파일 머리에 표기)

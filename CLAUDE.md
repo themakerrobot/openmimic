@@ -2,6 +2,7 @@
 
 - 기능·화면·설치 방법·파일 이름이 바뀌면 **같은 커밋에서** 문서를 갱신한다.
   - `README.md` 는 사용자 관점(무엇을·어떻게·화면 캡처)만. 기술 세부는 넣지 않고 docs 로 링크한다.
+  - README 는 한국어 `README.md` 와 영어 `README.en.md` 두 벌이다. 한쪽을 바꾸면 다른 쪽도 같은 커밋에서 맞춘다.
   - 설치·업데이트·운영 세부는 `docs/INSTALL.md`, 학습 정책 세부는 `docs/POLICIES.md`, Intel/OpenVINO/XPU 는 `docs/INTEL.md`.
   - 구조·설계 이유가 바뀌면 `docs/DEVELOPMENT.md`.
 - 화면이 바뀌었으면 `docs/img/` 의 해당 캡처를 다시 찍는다 (README 에 쓰인 이미지).
