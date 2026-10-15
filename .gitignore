@@ -1,0 +1,33 @@
+# 파이썬
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# lerobot 소스 체크아웃 · 데이터 · 산출물
+lerobot-src/
+data/
+outputs/
+
+# openmimic 런타임 (기기마다 다르고 매번 바뀝니다)
+openmimic_jobs/
+openmimic_run/
+openmimic_marks.json
+openmimic_envs/
+openmimic_projects.json
+openmimic_dsmeta.json
+openmimic_wizard.json
+*.log
+*.pid
+
+# 기기별 설정 — 포트·카메라 경로가 들어 있어 다른 기기에서는 안 맞습니다.
+# 이 기기 설정을 백업하고 싶으면 이 줄을 지우고 커밋하세요.
+openmimic_config.json
+
+# 가상 팔 (tools_simarms.py 실행 중에만 생김)
+openmimic_sim/
+openmimic_sim.json
+
+# 기기별 설정(포트·카메라 시리얼 포함) — 어떤 이름이든 커밋하지 않습니다
+*_config.json
