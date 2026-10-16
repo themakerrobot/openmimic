@@ -1500,5 +1500,9 @@
 "팔로워 팔에": "Follower arm at",
 "V (5V 계통) — 12V 팔이면 힘이 모자랍니다. 어댑터를 확인하세요": "V (5V system) — a 12V arm will be too weak. Check the adapter",
 "계통 범위": "system range",
-"V 밖 (어댑터·케이블 확인": "V out of range (check adapter and cables"
+"V 밖 (어댑터·케이블 확인": "V out of range (check adapter and cables",
+"토크 ON 을 먼저 누르세요": "Press Torque ON first",
+"슬라이더로 움직이려면": "To move with the sliders, press",
+"리더를 따라 움직이려면": "to follow the leader, press",
+"을 누르세요. 지금은 손으로 움직이면 값·3D 가 따라옵니다": ". For now, moving the arm by hand updates the values and 3D"
 }

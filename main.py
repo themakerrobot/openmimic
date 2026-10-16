@@ -5998,7 +5998,7 @@ function openWS(){{
         if(a.power_warn&&a.power_warn.length)
           warn+='<p class="badge b-warn">'+tag+'전원 점검: '+a.power_warn.map(esc).join(' · ')+'</p>';
         JOINTS.forEach(j=>{{
-          if(valEls[side][j])valEls[side][j].textContent=(a.target[j]??0).toFixed(1);
+          if(valEls[side][j])valEls[side][j].textContent=((torque||follow)?(a.target[j]??0):(a.actual[j]??0)).toFixed(1);
           if(actEls[side][j]){{
             const bad=stuck.indexOf(j)>=0;
             actEls[side][j].textContent='('+(a.actual[j]??0).toFixed(1)
@@ -6008,7 +6008,8 @@ function openWS(){{
             if(row) row.classList.toggle('stuck',bad);
           }}
           const s=sliders[side][j]; if(!s)return;
-          s.disabled=follow;
+          s.disabled=follow||!torque;
+          s.title=(!torque&&!follow)?'토크 ON 을 먼저 누르세요':'';
           if(follow){{
             if(a.target[j]!==undefined)s.value=a.target[j];
           }}else{{
@@ -6018,6 +6019,8 @@ function openWS(){{
         }});
         updateRobot(side,a.actual);
       }});
+      if(!torque&&!follow) warn='<p class=muted style="margin:0 0 8px">토크가 꺼져 있습니다. 슬라이더로 움직이려면 <b>토크 ON</b>, '
+        +'리더를 따라 움직이려면 <b>리더 팔로우 ON</b>을 누르세요. 지금은 손으로 움직이면 값·3D 가 따라옵니다.</p>'+warn;
       document.getElementById('warnbox').innerHTML=warn;
       if(d.err){{ if(cst.textContent!=='bus error') setStatus('bus error','b-bad'); }}
       else if(cst.textContent==='bus error') setStatus('연결됨','b-ok');     // 오류가 풀리면 배지도 되돌림
