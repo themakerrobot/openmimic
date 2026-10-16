@@ -45,7 +45,11 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
+import openmimic_health  # 시작 전 전원 점검 · 실행 중 서보 온도/전압 감시
 import openmimic_ov  # OpenVINO 변환·롤아웃. openvino 자체는 필요할 때 별도 프로세스에서만 import 합니다
+import openmimic_simcam  # 가상 카메라 (openmimic_sim/cam_<이름>) — 실제 카메라 경로는 그대로
+
+openmimic_simcam.install()
 
 # ------------------------------- 경로 ---------------------------------------
 HOME = Path.home()
@@ -114,6 +118,7 @@ FEEDBACK_HZ = 10
 TRACK_WARN_DEG = 6.0      # 명령과 실측이 이만큼 벌어지면 '안 따라옴' 경고
 GOAL_REFRESH_S = 1.0      # 데드밴드 안이어도 이 주기로 목표를 다시 씀 (놓친 명령 복구)
 TEMP_READ_S = 1.0         # 서보 온도 읽기 주기
+NOTE_HOLD_S = 8.0         # 제어 탭 버튼(토크·팔로우) 실패 문구를 보여 주는 시간
 TEMP_WARN_C = 55          # 이 이상이면 경고
 TEMP_HOT_C = 65           # 이 이상이면 위험 (STS3215 기본 셧다운 70°C)
 MAX_STEP_DEG = 2.5        # 슬라이더 제어 시 스텝당 최대 이동
@@ -326,7 +331,8 @@ _START_PATHS = {"/api/record", "/api/rollout", "/api/train", "/api/setup/probe",
                 "/api/wizard/verify/start", "/api/wizard/import_calib", "/api/wizard/mode",
                 "/api/setup/config", "/api/calib/start", "/api/calib/factory", "/api/wizard/robot",
                 "/api/envs/activate", "/api/envs/save_as", "/api/ov/convert",
-                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull"}
+                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull",
+                "/api/sim/start", "/api/sim/stop"}
 _START_PREFIXES = ("/api/install/", "/api/dataset/repair/")
 _START_GATE = asyncio.Lock()
 
@@ -400,6 +406,7 @@ NAV_EN = {"셋업": "Setup", "캘리브레이션": "Calibration", "제어": "Con
           "학습": "Training", "모델": "Models", "실행": "Rollout", "프로젝트": "Projects", "허브": "Hub", "작업": "Jobs",
           "더보기": "More", "대기": "Idle", "클라우드 학습": "Cloud training", "포트 감시": "Port watch", "설치": "Install",
           "OpenVINO 변환": "OpenVINO convert", "복구": "Repair", "삭제": "Delete",
+          "가상 장치": "Virtual devices",
           # 표 머리·입력칸 이름표·작은 제목 — 한 낱말짜리라 자리를 정해 바꿉니다
           "로봇": "Robot", "크기": "Size", "상태": "Status", "시작": "Started", "종류": "Kind", "폭": "Span",
           "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration"}
@@ -1493,6 +1500,18 @@ def connect_leader(dev):
         raise
 
 
+def power_gate(bus, role, arm_cfg):
+    """연결된 버스로 시작 전 전원 점검. 막을 조건이면 RuntimeError, 아니면 경고 문장 목록."""
+    try:
+        p = openmimic_health.read_board_power(bus)
+    except Exception as e:      # noqa: BLE001
+        return [f"전압을 읽지 못했습니다 ({type(e).__name__})"]
+    level, msgs = _power_judge(role, arm_cfg, p)
+    if level == "block":
+        raise RuntimeError("전원 점검 실패 — " + " / ".join(msgs))
+    return msgs
+
+
 # ----------------------------- 수동 제어 (제어 탭) -------------------------
 class ArmCtl:
     """lerobot SOFollower 래퍼.
@@ -1521,6 +1540,9 @@ class ArmCtl:
         self.temp = {}     # 서보 온도(°C)
         self.ten = {}      # Torque_Enable 실제 값 (서보가 스스로 토크를 뺐는지)
         self.load = {}     # Present_Load — 버티는 중이면 큽니다
+        self.power_warn = []   # 연결할 때 전원 점검 경고
+        self.guard = None      # openmimic_health.HealthGuard — 온도·전압·보호 플래그
+        self.health_stop = ""  # 감시가 멈춘 이유 (리더 팔로우를 끄고 그 자리에 멈춤)
         self._last_goal = {}
         self._last_temp = 0.0
         self.lock = threading.Lock()   # 시리얼은 스레드 안전하지 않음 — 루프/명령 직렬화
@@ -1547,6 +1569,13 @@ class ArmCtl:
         # 캘리브레이션 파일을 보드에 쓰고(어긋난 경우) configure 까지 — 토크가 켜진 채로 끝납니다
         connect_follower(robot)
         try:
+            self.power_warn = power_gate(robot.bus, "follower", self.cfg)     # 막을 전원이면 여기서 예외
+            self.health_stop = ""
+            self.guard = openmimic_health.HealthGuard([("", robot.bus)])
+            try:
+                self.guard.start()
+            except Exception:      # noqa: BLE001 — 감시를 못 켜도 제어는 됩니다
+                self.guard = None
             # Control 은 '토크 꺼짐' 으로 시작합니다 (화면 표시와 실제를 일치시킴).
             # 켤 때는 set_torque 가 현재 위치를 목표로 쓰고 켭니다.
             failed = torque_off_all(robot.bus)
@@ -1648,8 +1677,16 @@ class ArmCtl:
                         #   Torque_Enable=1 + 부하 큼 → 기계적으로 막힘 (곧 과열)
                         #   Torque_Enable=1 + 부하 ~0 → 명령 미도달 / 서보 이상
                         # Dynamixel(OMX) 에는 Present_Load 가 없어서 Present_Current 로 대신합니다
-                        for names, dst in ((("Present_Temperature",), "temp"),
-                                           (("Torque_Enable",), "ten"),
+                        if self.guard is not None:
+                            self.guard.poll(force=True)
+                            self.temp = dict(self.guard.temp)
+                            self.health_stop = self.guard.stopping
+                            if self.health_stop:
+                                # 제어 탭은 사람이 보고 있으므로 토크를 빼지 않고(팔이 떨어지지 않게)
+                                # 정지 조건이 남아 있는 동안 리더 팔로우를 끄고 지금 명령 위치에 멈춥니다
+                                self.follow = False
+                                self.target = dict(self.cmd)
+                        for names, dst in ((("Torque_Enable",), "ten"),
                                            (("Present_Load", "Present_Current"), "load")):
                             for name in names:
                                 try:
@@ -1734,6 +1771,7 @@ class LeaderCtl:
         self.cfg = arm_cfg
         self.side = arm_cfg["side"]
         self.tele = None
+        self.power_warn = []
         self.lock = threading.Lock()
 
     @property
@@ -1746,6 +1784,11 @@ class LeaderCtl:
             raise RuntimeError(
                 f"리더 캘리브레이션 파일이 없습니다: {tele.calibration_fpath} — 캘리브레이션 탭에서 만드세요")
         connect_leader(tele)
+        try:
+            self.power_warn = power_gate(tele.bus, "leader", self.cfg)
+        except Exception:
+            close_arm(tele, disable_torque=kind()["leader_torque"])
+            raise
         self.tele = tele
 
     def read(self):
@@ -1909,6 +1952,204 @@ def _sim_ports():
     return [p for p in d.get("ports", []) if os.path.exists(p.get("path", ""))]
 
 
+# ----------------------------- 가상 장치 (팔·카메라 없이 해 보기) -------------------
+# 셋업 화면의 '가상 장치 켜기' 가 tools_simarms.py 를 작업으로 띄우고, 가상 팔·카메라만 쓰는 환경
+# 'sim-<기종>-<모드>' 로 바꿉니다. 캘리브 id 는 sim_* 라서 실제 팔의 캘리브레이션 파일과 섞이지 않고,
+# 끄면 켜기 전 환경으로 돌아갑니다. 화면 아래 '가상 장치' 막대가 손 대신 관절을 움직입니다 (openmimic_sim/cmd).
+SIM_PY = Path(__file__).resolve().parent / "tools_simarms.py"
+SIM_ENV_PREFIX = "sim-"
+SIM_CAM = {"width": 320, "height": 240, "fps": 30}
+
+
+def sim_state():
+    d = load_json(SIM_FILE, {})
+    pid = d.get("pid") if isinstance(d, dict) else None
+    try:
+        if not pid:
+            raise OSError
+        os.kill(int(pid), 0)
+    except (OSError, ValueError):
+        return {"on": False}
+    d["on"] = True
+    d["cams"] = [c for c in d.get("cams", []) if isinstance(c, dict) and c.get("path")]
+    return d
+
+
+def sim_env_name(robot, mode):
+    return f"{SIM_ENV_PREFIX}{robot}-{mode}"
+
+
+def sim_config(st, prev_env):
+    """가상 장치 상태(st)로 환경 설정을 만듭니다. 전에 쓰던 같은 이름의 가상 환경이 있으면 fps·과제 등은 이어받습니다."""
+    name = sim_env_name(st["robot"], st["mode"])
+    old = load_json(_env_file(name), None)
+    cfg = old if isinstance(old, dict) else json.loads(json.dumps(DEFAULT_CONFIG))
+    cfg.update({"robot": st["robot"], "mode": st["mode"], "env_name": name, "sim_prev_env": prev_env})
+    ports = {p.get("name"): p["path"] for p in st.get("ports", [])}
+    cams = {c["name"]: c["path"] for c in st.get("cams", [])}
+    sides = ["main"] if st["mode"] == "single" else ["left", "right"]
+    arms = []
+    for side in sides:
+        sfx = "" if side == "main" else f"_{side}"
+        wrist = cams.get("wrist" if side == "main" else f"{side}_wrist")
+        arms.append({"side": side, "follower_port": ports.get(f"{side}_follower", ""),
+                     "leader_port": ports.get(f"{side}_leader", ""),
+                     "follower_id": f"sim_follower{sfx}", "leader_id": f"sim_leader{sfx}",
+                     "cameras": {"wrist": dict(SIM_CAM, index_or_path=wrist)} if wrist else {}})
+    cfg["arms"] = arms
+    cfg["cameras"] = {"top": dict(SIM_CAM, index_or_path=cams["top"])} if cams.get("top") else {}
+    return cfg
+
+
+def sim_start(robot, mode):
+    if robot not in ROBOT_KINDS or mode not in ("single", "bimanual"):
+        raise ValueError("기종·모드 값이 잘못됐습니다")
+    if sim_state().get("on"):
+        raise ValueError("가상 장치가 이미 켜져 있습니다 — 끄고 다시 켜세요")
+    busy = robot_busy()
+    if busy:
+        raise ValueError(f"팔을 쓰는 중입니다 ({busy['id']}) — 끝낸 뒤 켜세요")
+    jid = start_job("sim", [sys.executable, str(SIM_PY), "--robot", robot, "--mode", mode],
+                    cwd=str(SIM_PY.parent), spec={"robot": robot, "mode": mode})
+    pid = load_json(JOB_DIR / f"{jid}.json", {}).get("pid")
+    st = {}
+    for _ in range(50):                    # 가상 보드(PTY)와 상태 파일이 생길 때까지 (보통 0.5초 안)
+        st = sim_state()
+        if st.get("on") and st.get("pid") == pid and st.get("ports"):
+            break
+        time.sleep(0.1)
+    else:
+        kill_job(jid, force=True)
+        raise RuntimeError(f"가상 장치를 켜지 못했습니다 — 작업 로그 확인: {jid}")
+    prev = env_name()
+    if not prev.startswith(SIM_ENV_PREFIX):
+        sync_active_env()                  # 실제 팔 설정을 그 환경 파일에 보관
+    else:
+        prev = (CFG or {}).get("sim_prev_env") or DEFAULT_ENV
+    cfg = sim_config(st, prev)
+    err = validate_config(cfg)
+    if err:
+        kill_job(jid, force=True)
+        raise RuntimeError(f"가상 환경 설정 오류: {err}")
+    ENV_DIR.mkdir(parents=True, exist_ok=True)
+    save_json(_env_file(cfg["env_name"]), cfg)
+    _write_active_config(cfg)
+    return {"ok": True, "job": jid, "env": cfg["env_name"], "prev": prev}
+
+
+def sim_stop():
+    st = sim_state()
+    busy = busy_with(("record", "rollout", "calib"))
+    if busy:
+        raise ValueError(f"{busy['id']} 가 가상 팔을 쓰는 중입니다 — 끝낸 뒤 끄세요")
+    for a in list(ARMS.values()) + list(LEADERS.values()):
+        try:
+            if a.connected:
+                a.disconnect()
+        except Exception:      # noqa: BLE001 — 가상 보드는 곧 사라지므로 닫기 실패는 무시
+            pass
+    j = next((j for j in jobs_index() if j["kind"] == "sim" and j["alive"]), None)
+    if j:
+        kill_job(j["id"])
+    elif st.get("pid"):
+        try:
+            os.kill(int(st["pid"]), signal.SIGTERM)
+        except (OSError, ValueError):
+            pass
+    back = ""
+    if env_name().startswith(SIM_ENV_PREFIX):
+        sync_active_env()
+        back = (CFG or {}).get("sim_prev_env") or DEFAULT_ENV
+        if not _env_file(back).exists():
+            back = DEFAULT_ENV
+        try:
+            activate_env(back)
+        except ValueError:
+            back = ""
+    return {"ok": True, "env": back}
+
+
+def sim_card_html():
+    """셋업·셋업 마법사 위쪽 카드. 실제 보드가 없으면 크게, 있으면 접어서."""
+    st = sim_state()
+    if st.get("on"):
+        return (f'<div class="card needcard"><div class=needtxt><b>가상 장치 사용 중 — 환경 {esc(env_name())}</b>'
+                '<span class=muted>가상 팔·카메라로 셋업부터 실행까지 해 볼 수 있습니다. 손으로 움직여야 하는 단계는 화면 아래 '
+                '<b>팔로워 움직이기</b>·<b>리더 움직이기</b> 버튼을 쓰세요. 실제 팔을 쓰려면 아래 막대의 <b>가상 장치 끄기</b> — '
+                '전에 쓰던 환경으로 돌아갑니다.</span></div></div>')
+    if env_name().startswith(SIM_ENV_PREFIX):
+        # 재부팅 등으로 가상 장치가 꺼졌는데 환경은 가상 그대로인 경우
+        return (f'<div class="card needcard"><div class=needtxt><b>가상 장치가 꺼져 있습니다 — 환경 {esc(env_name())} 은 가상 팔용입니다</b>'
+                '<span class=muted>다시 켜면 가상 팔·카메라가 같은 경로로 생겨 캘리브레이션을 그대로 씁니다.</span></div>'
+                '<div class=toolbar><button class=primary onclick="simAgain(this)">다시 켜기</button>'
+                '<button onclick="simBack()">전에 쓰던 환경으로</button></div></div>'
+                '<script>async function simAgain(btn){btn.disabled=true;const r=await fetch(\'/api/sim/start\',{method:\'POST\','
+                'headers:{\'Content-Type\':\'application/json\'},body:\'{}\'});const j=await r.json();'
+                'if(j.error){alert(j.error);btn.disabled=false;return;}location.reload();}'
+                'async function simBack(){const r=await fetch(\'/api/sim/stop\',{method:\'POST\'});const j=await r.json();'
+                'if(j.error)alert(j.error);else location.reload();}</script>')
+    real = [p for p in list_serial_ports() if not p.get("sim")]
+    cur_r, cur_m = (CFG or {}).get("robot", "so101"), (CFG or {}).get("mode", "single")
+    opts_r = "".join(f'<option value="{k}"{" selected" if k == cur_r else ""}>{esc(v["label"])}</option>'
+                     for k, v in ROBOT_KINDS.items())
+    opts_m = "".join(f'<option value="{k}"{" selected" if k == cur_m else ""}>{lb}</option>'
+                     for k, lb in (("single", "한팔"), ("bimanual", "양팔")))
+    form = (f'<div class=toolbar style="margin-top:8px"><select id=simrobot>{opts_r}</select>'
+            f'<select id=simmode>{opts_m}</select>'
+            '<button class=primary onclick="simStart(this)">가상 장치 켜기</button></div>'
+            '<script>async function simStart(btn){btn.disabled=true;btn.textContent=\'켜는 중…\';'
+            'const r=await fetch(\'/api/sim/start\',{method:\'POST\',headers:{\'Content-Type\':\'application/json\'},'
+            'body:JSON.stringify({robot:document.getElementById(\'simrobot\').value,mode:document.getElementById(\'simmode\').value})});'
+            'const j=await r.json();if(j.error){alert(j.error);btn.disabled=false;btn.textContent=\'가상 장치 켜기\';return;}'
+            'location.href=\'/setup/wizard\';}</script>')
+    desc = ('가상 팔(리더·팔로워)과 가상 카메라를 만들어 셋업 → 캘리브레이션 → 수집 → 학습 → 실행을 끝까지 해 봅니다. '
+            '실제 팔 설정은 그대로 보관되고, 끄면 돌아갑니다.')
+    if not real:
+        return (f'<div class="card needcard"><div class=needtxt><b>연결된 팔이 없습니다 — 가상 장치로 해 보기</b>'
+                f'<span class=muted>{desc}</span>{form}</div></div>')
+    return (f'<details class=card><summary><b>팔 없이 해 보기 — 가상 장치</b></summary>'
+            f'<p class=muted>{desc}</p>{form}</details>')
+
+
+def sim_send(line):
+    SIM_DIR.mkdir(exist_ok=True)
+    with open(SIM_DIR / "cmd", "a") as f:
+        f.write(line + "\n")
+
+
+def sim_panel_html():
+    """가상 장치가 켜져 있으면 모든 화면 아래쪽에 뜨는 조작 막대 — 손 대신 관절을 움직입니다."""
+    st = sim_state()
+    if not st.get("on"):
+        return ""
+    side_lb = {"left": "왼쪽 ", "right": "오른쪽 "}
+    btns = fault = ""
+    for i, p in enumerate(st.get("ports", []), 1):
+        sd = side_lb.get(p.get("side"), "")
+        role = "팔로워" if p.get("role") == "follower" else "리더"
+        btns += (f'<button class=simw onclick="simCmd({{cmd:\'w\',board:{i}}})" title="4초 동안 관절을 양 끝까지 움직입니다 '
+                 f'(포트 찾기·캘리브레이션·확인 단계에서 손 대신)">{sd}{role} 움직이기</button>')
+        if p.get("role") == "follower":
+            fault += (f'<span class=simf><button onclick="simCmd({{cmd:\'t\',board:{i},value:68}})">{sd}팔로워 과열 흉내</button>'
+                      f'<button onclick="simCmd({{cmd:\'v\',board:{i},value:9}})">{sd}팔로워 전압 강하 흉내</button>'
+                      f'<button onclick="simCmd({{cmd:\'t\',board:{i},value:32}});simCmd({{cmd:\'v\',board:{i},value:12}})">'
+                      f'{sd}팔로워 정상 값으로</button></span>')
+    auto = "리더 자동 움직임: 켜짐" if st.get("auto") else "리더 자동 움직임: 꺼짐"
+    return (f'<div class=simbar id=simbar><b>가상 장치 켜짐</b><span class=muted>{esc(st.get("robot", ""))} · '
+            f'{"양팔" if st.get("mode") == "bimanual" else "한팔"}</span>{btns}'
+            f'<button class=simw onclick="simCmd({{cmd:\'a\',on:{"false" if st.get("auto") else "true"}}})" '
+            f'title="리더가 계속 천천히 움직입니다 (제어 리더 팔로우·수집 시험용)">{auto}</button>'
+            f'<details class=simfault><summary>이상 상황 흉내</summary>{fault}'
+            f'<p class=muted>서보 상태 감시(실행·수집 중 자동 정지)를 시험합니다</p></details>'
+            f'<button class=simoff onclick="simStop()">가상 장치 끄기</button></div>'
+            '<script>async function simCmd(b){const r=await fetch(\'/api/sim/cmd\',{method:\'POST\','
+            'headers:{\'Content-Type\':\'application/json\'},body:JSON.stringify(b)});const j=await r.json();'
+            'if(j.error)alert(j.error);else if(b.cmd===\'a\')location.reload();}'
+            'async function simStop(){if(!confirm(\'가상 장치를 끄고 전에 쓰던 환경으로 돌아갈까요?\'))return;'
+            'const r=await fetch(\'/api/sim/stop\',{method:\'POST\'});const j=await r.json();'
+            'if(j.error)alert(j.error);else location.reload();}</script>')
+
+
 def list_serial_ports():
     """시리얼 후보 나열. udev 심볼릭 링크가 전혀 없어도 동작합니다."""
     by_id = _alias_map("/dev/serial/by-id")
@@ -2012,6 +2253,8 @@ def list_video_devices():
     except Exception as e:
         for dev in sorted(glob.glob("/dev/video*")):
             found.append(entry(dev, None, f"(probe 실패: {e})"))
+    for c in sim_state().get("cams", []):           # 가상 장치가 켜져 있으면 가상 카메라
+        found.append(entry(c["path"], {"width": 320, "height": 240, "fps": 30}, f"가상 카메라 {c['name']}"))
     CAM_SNAPS.clear()
     for f in found:
         jpg = camera_snapshot(f["dev"])
@@ -2565,10 +2808,20 @@ a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .statuscluster{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto;white-space:nowrap;
   font-family:var(--mono);font-size:12px;color:var(--muted)}
 .statuscluster a.chip{display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none}
+.statuscluster a.chip .badge{max-width:14em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media(max-width:700px){ .statuscluster a.chip .badge{max-width:6.5em} }
 .clab{font-family:var(--sans);font-size:11px;color:var(--dim)}
 .fsbtn{flex:0 0 auto}
 .warnbar{background:rgba(217,161,59,.12);border-bottom:1px solid rgba(217,161,59,.5);color:var(--warn);
-  padding:8px 22px;font-size:13px;line-height:1.5}
+  padding:8px 22px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
+.simbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;
+  padding:8px 14px;background:var(--surface);border-top:2px solid var(--accent);font-size:13px}
+.simbar button{font-size:12px;padding:4px 9px}
+.simbar .simoff{margin-left:auto}
+.simbar details.simfault summary{cursor:pointer;color:var(--muted)}
+.simbar .simf{display:inline-flex;gap:4px;align-items:center;margin-right:8px}
+.simbar details.simfault p{margin:4px 0 0;font-size:11px}
+body:has(#simbar){padding-bottom:72px}
 .jobtxt{color:inherit;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .langbtn{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:2px 7px;text-decoration:none}
 .langbtn:hover{color:var(--text);border-color:var(--accent);text-decoration:none}
@@ -2736,11 +2989,11 @@ def setup_needed_html():
 # 상단 작업 표시에 쓰는 작업 종류 이름 (영어 화면은 사전의 <span class=jobk>…</span> 항목으로 바뀝니다)
 JOB_KIND_LABEL = {"record": "수집", "train": "학습", "cloudtrain": "클라우드 학습", "rollout": "실행", "control": "제어",
                   "setup": "포트 감시", "hub": "허브", "install": "설치", "ovconvert": "OpenVINO 변환",
-                  "repair": "복구", "delete": "삭제"}
+                  "repair": "복구", "delete": "삭제", "sim": "가상 장치"}
 
 
 def nav_html(active=""):
-    running = [j for j in jobs_index() if j["alive"]]
+    running = [j for j in jobs_index() if j["alive"] and j["kind"] != "sim"]     # 가상 장치는 아래 막대에 따로 표시
     if any_arm_connected():
         running = [{"id": "manual-control", "kind": "control"}] + running
     if running:
@@ -2787,7 +3040,8 @@ def nav_html(active=""):
             f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             f'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>'
-            f'</svg></button></div>' + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else ''))
+            f'</svg></button></div>' + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else '')
+            + sim_panel_html())
 
 
 # ----------------------------- PWA / 키오스크 -------------------------------
@@ -2948,7 +3202,8 @@ def getting_started():
     """처음 쓰는 사람용 5단계 — (이름, 설명, 링크, 버튼 글, 완료 여부)."""
     cal = calib_status()
     return [
-        ("셋업", "팔(보드)을 USB 에 꽂고 리더·팔로워 포트를 정합니다", "/setup/wizard", "셋업 마법사", ports_configured()),
+        ("셋업", "팔(보드)을 USB 에 꽂고 리더·팔로워 포트를 정합니다 — 팔이 없으면 셋업 마법사에서 가상 장치로 해 볼 수 있습니다",
+         "/setup/wizard", "셋업 마법사", ports_configured()),
         ("캘리브레이션", "관절을 손으로 움직여 범위를 기록합니다 — 셋업 마법사에서 이어서 합니다", "/setup/wizard", "캘리브레이션",
          all(c["ok"] for sd in cal.values() for c in sd.values())),
         ("수집", "리더 팔로 시연해 데이터셋을 만듭니다 (보통 에피소드 50개 안팎)", "/collect", "수집하러 가기",
@@ -3474,7 +3729,7 @@ def collect_page(resume: str = ""):
         episode_time_s:document.getElementById('ept').value,
         task:document.getElementById('task').value}};
       const r=await fetch('/api/record',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(b)}});
-      const d=await r.json(); if(d.error)alert(d.error); else location.reload();
+      const d=await r.json(); if(d.error)alert(d.error); else {{ if(d.warn&&d.warn.length) alert('전원 점검 — 확인하세요\\n\\n'+d.warn.join('\\n')); location.reload(); }}
     }}
     </script>"""
 
@@ -3499,6 +3754,50 @@ def _preflight_ports():
             if not ids:
                 bad.append(f"{tag}: {port} 에서 모터 응답이 없습니다 — 전원과 케이블을 확인하세요")
     return bad
+
+
+POWER_MEM = openmimic_health.PowerMemory(PROJ / "openmimic_power.json")
+
+
+def _power_judge(role, arm_cfg, p):
+    """(수준, 문장 목록) — 지난번 전압 기억과 비교하고, 막지 않았으면 이번 값을 기억합니다."""
+    key = f"{role}:{arm_cfg.get(f'{role}_id', '')}"
+    level, msgs = openmimic_health.judge_power(robot_key(), role, p, POWER_MEM.get(key))
+    if level != "block" and p.get("median"):
+        try:
+            POWER_MEM.put(key, p["median"])
+        except OSError:
+            pass
+    return level, msgs
+
+
+def power_preflight(roles=("follower", "leader")):
+    """시작 전 전원 점검 — (막을 이유 목록, 경고 목록). 포트를 잠깐 열어 서보 전압만 읽습니다 (아무것도 쓰지 않음).
+    블로킹이므로 호출 쪽에서 스레드로 돌릴 것."""
+    bad, warns = [], []
+    for side, arm in ARM_CFGS.items():
+        for role in roles:
+            port = arm.get(f"{role}_port") or ""
+            if not port or not Path(port).exists():
+                continue                       # 없는 포트는 _preflight_ports 가 따로 막습니다
+            tag = f"{side}/{role}" if BIMANUAL else role
+            try:
+                if robot_key() == "omx":
+                    import tools_dxlcheck as M
+                    io = M.BusIO(port, role)
+                else:
+                    import tools_armcheck as M
+                    io = M.BusIO(port)
+                try:
+                    p = openmimic_health.read_board_power(io.bus)
+                finally:
+                    io.close()
+            except Exception as e:      # noqa: BLE001 — 전압 읽기 실패로 막지는 않습니다 (모터 응답은 따로 점검)
+                warns.append(f"{tag}: 전압을 읽지 못했습니다 ({type(e).__name__}) — 어댑터를 눈으로 확인하세요")
+                continue
+            level, msgs = _power_judge(role, arm, p)
+            (bad if level == "block" else warns).extend(f"{tag}: {m}" for m in msgs)
+    return bad, warns
 
 
 @app.post("/api/record")
@@ -3532,6 +3831,9 @@ async def api_record(req: Request):
     bad = await asyncio.to_thread(_preflight_ports)
     if bad:
         return JSONResponse({"error": "포트 점검 실패\n\n" + "\n".join(bad)}, status_code=400)
+    pbad, pwarn = await asyncio.to_thread(power_preflight)
+    if pbad:
+        return JSONResponse({"error": "전원 점검 실패 — 시작하지 않았습니다\n\n" + "\n".join(pbad + pwarn)}, status_code=400)
     busy = exclusive_busy()      # 점검하는 몇 초 사이에 Control 등이 포트를 잡았을 수 있습니다
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
@@ -3576,7 +3878,7 @@ async def api_record(req: Request):
         pname, _ = active_project()
         if pname:
             assign_to_project("datasets", name, pname)
-    return {"ok": True, "job": jid}
+    return {"ok": True, "job": jid, "warn": pwarn}
 
 
 @app.get("/api/record_status/{jid}")
@@ -5141,6 +5443,7 @@ ROLLOUT_RUN_BODY = """
         <span>프레임 예산</span><b id=budget>-</b>
       </div>
       <p class=muted id=perfwarn style="margin:6px 0 0"></p>
+      <p id=health class=badge style="display:none;margin:8px 0 0"></p>
     </div>
     <div class=card style="margin-top:10px">
       <p class=eyebrow>관절 — 실측 / 명령</p>
@@ -5223,6 +5526,15 @@ async function refresh(){
   if(st.chunk_ms!=null && st.chunk_ms>b) w+='청크 계산이 프레임 예산보다 깁니다 — 청크가 바뀌는 순간 한 박자 멈출 수 있습니다. ';
   if(st.hz && st.hz<RO.fps*0.85) w+='제어 주기가 목표보다 낮습니다 (카메라·USB 대역폭·CPU 부하 확인).';
   $('perfwarn').textContent=w;
+  const hs=st.health, hb=$('health');
+  if(st.health_stop){ hb.style.display=''; hb.className='badge b-bad';
+    hb.textContent='서보 상태 이상으로 자동 정지했습니다: '+st.health_stop; }
+  else if(hs&&hs.msgs&&hs.msgs.length){ hb.style.display=''; hb.className='badge '+(hs.level==='stop'?'b-bad':'b-warn');
+    hb.textContent='서보 상태: '+hs.msgs.join(' · ')+(hs.minvolt!=null?' (최저 전압 '+hs.minvolt+' V)':''); }
+  else if(hs&&hs.maxtemp!=null){ hb.style.display=''; hb.className='badge';
+    hb.textContent='서보 상태 정상 — 최고 온도 '+hs.maxtemp+'°C'+(hs.minvolt!=null?' · 최저 전압 '+hs.minvolt+' V':''); }
+  else if(st.health_err){ hb.style.display=''; hb.className='badge b-warn'; hb.textContent='서보 상태 감시를 켜지 못했습니다: '+st.health_err; }
+  else hb.style.display='none';
   joints(st);
   const tr=d.trials||{}, run=tr.run||{n:0,ok:0}, ck=tr.ckpt||{};
   $('trun').textContent=run.ok+' 성공 / '+run.n+' 시도';
@@ -5355,7 +5667,7 @@ def rollout_page(job: str = "", ckpt: str = ""):
                task:document.getElementById('task').value,
                engine:ENG.value, precision:PREC.value}};
       const r=await fetch('/api/rollout',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(b)}});
-      const d=await r.json(); if(d.error)alert(d.error); else location.reload();
+      const d=await r.json(); if(d.error)alert(d.error); else {{ if(d.warn&&d.warn.length) alert('전원 점검 — 확인하세요\\n\\n'+d.warn.join('\\n')); location.reload(); }}
     }}
     </script>"""
 
@@ -5422,11 +5734,14 @@ async def api_rollout(req: Request):
                    f"--fps={CFG['fps']}"])
     except (NotImplementedError, ValueError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    pbad, pwarn = await asyncio.to_thread(power_preflight, ("follower",))
+    if pbad:
+        return JSONResponse({"error": "전원 점검 실패 — 시작하지 않았습니다\n\n" + "\n".join(pbad + pwarn)}, status_code=400)
     try:
         jid = start_job("rollout", argv)
     except JobStartError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
-    return {"ok": True, "job": jid}
+    return {"ok": True, "job": jid, "warn": pwarn}
 
 
 @app.post("/api/delete_checkpoint")
@@ -5659,6 +5974,7 @@ function openWS(){{
       bflw.textContent=follow?'리더 팔로우 OFF':'리더 팔로우 ON';
       bflw.classList.toggle('primary',follow);
       let warn='';
+      const esc=t=>String(t).replace(/[&<>"]/g,c=>({{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}}[c]));
       SIDES.forEach(side=>{{
         const a=d.arms[side]; if(!a||!sliders[side])return;
         const stuck=a.stuck||[], hot=a.hot||[];
@@ -5675,6 +5991,12 @@ function openWS(){{
         }}
         if(hot.length) warn+='<p class="badge '+(a.maxtemp>=65?'b-bad':'b-warn')+'">'+tag
           +'서보 온도 '+a.maxtemp+'°C: '+hot.join(', ')+(a.maxtemp>=65?' — 즉시 토크를 끄세요':'')+'</p>';
+        if(a.health_stop) warn+='<p class="badge b-bad">'+tag+'서보 상태 이상 — 리더 팔로우·슬라이더를 멈췄습니다: '
+          +esc(a.health_stop)+'</p>';
+        else if(a.health&&a.health.level==='warn'&&a.health.msgs.length)
+          warn+='<p class="badge b-warn">'+tag+'서보 상태: '+a.health.msgs.map(esc).join(' · ')+'</p>';
+        if(a.power_warn&&a.power_warn.length)
+          warn+='<p class="badge b-warn">'+tag+'전원 점검: '+a.power_warn.map(esc).join(' · ')+'</p>';
         JOINTS.forEach(j=>{{
           if(valEls[side][j])valEls[side][j].textContent=(a.target[j]??0).toFixed(1);
           if(actEls[side][j]){{
@@ -5831,7 +6153,8 @@ def _arms_state():
             diag[n] = {"torque_enable": te, "load": ld, "temp": a.temp.get(n), "why": why}
         out[s] = {"actual": a.actual, "target": a.target, "limits": a.limits,
                   "track": a.track, "temp": a.temp, "hot": hot, "stuck": stuck,
-                  "diag": diag,
+                  "diag": diag, "health": a.guard.state() if a.guard else None, "health_stop": a.health_stop,
+                  "power_warn": a.power_warn + LEADERS[s].power_warn if s in LEADERS else a.power_warn,
                   "maxtemp": max(a.temp.values()) if a.temp else None}
     return out
 
@@ -5923,6 +6246,12 @@ async def ws_control(sock: WebSocket):
         for side, arm in ARMS.items():
             arm.start_loop(LEADERS[side])
 
+        # 토크·팔로우 버튼 실패 문구 — 팔 루프가 매 주기 a.err 를 지우므로 따로 잡아 두고 몇 초 보여 줍니다
+        note = {"m": "", "t": -1e9}
+
+        def _note(e):
+            note.update(m=str(e), t=time.monotonic())
+
         async def rx():
             nonlocal synced
             async for msg in sock.iter_text():
@@ -5936,6 +6265,8 @@ async def ws_control(sock: WebSocket):
                 if kind == "target":
                     arm = ARMS.get(d.get("side"))
                     js_ = d.get("joints")
+                    if arm and arm.health_stop:
+                        continue                   # 서보 상태 이상으로 멈춘 동안은 슬라이더 명령을 받지 않음
                     if arm and isinstance(js_, dict):
                         for k, v in js_.items():
                             if k in CTL_JOINTS:
@@ -5948,12 +6279,12 @@ async def ws_control(sock: WebSocket):
                         await asyncio.to_thread(_set_torque_all, bool(d.get("on")))
                         synced = True
                     except Exception as e:
-                        _first_arm().err = str(e)
+                        _note(e)
                 elif kind == "estop":
                     try:
                         await asyncio.to_thread(_estop)
                     except Exception as e:
-                        _first_arm().err = str(e)
+                        _note(e)
                 elif kind == "follow":
                     on = bool(d.get("on"))
                     try:
@@ -5963,7 +6294,7 @@ async def ws_control(sock: WebSocket):
                             await asyncio.to_thread(_leaders_off)
                         synced = True
                     except Exception as e:
-                        _first_arm().err = str(e)
+                        _note(e)
                         try:
                             await asyncio.to_thread(_leaders_off)
                         except Exception:
@@ -5975,6 +6306,8 @@ async def ws_control(sock: WebSocket):
                 t0 = time.monotonic()
                 any_arm = _first_arm()
                 err = next((a.err for a in ARMS.values() if a.err), "")
+                if not err and t0 - note["t"] < NOTE_HOLD_S:
+                    err = note["m"]
                 await sock.send_text(json.dumps({
                     "type": "state", "arms": _arms_state(),
                     "torque": any_arm.torque, "follow": any_arm.follow,
@@ -6100,7 +6433,7 @@ def _validate_cam(name, spec, seen):
         return f"카메라 {name} 형식 오류"
     idx = spec.get("index_or_path")
     if isinstance(idx, str):
-        if not idx.startswith("/dev/"):
+        if not idx.startswith("/dev/") and openmimic_simcam.sim_cam_name(idx) is None:
             return f"카메라 {name} 경로는 /dev/ 로 시작해야 합니다"
     elif not isinstance(idx, int) or isinstance(idx, bool) or idx < 0:
         return f"카메라 {name} 인덱스가 잘못됨"
@@ -6219,7 +6552,8 @@ def validate_config(cfg):
 
 @app.get("/setup", response_class=HTMLResponse)
 def setup_page():
-    return CSS + nav_html("st") + SETUP_HTML
+    return CSS + nav_html("st") + SETUP_HTML.replace("<p class=eyebrow id=envcard>",
+                                                     sim_card_html() + "<p class=eyebrow id=envcard>", 1)
 
 
 @app.get("/api/setup/state")
@@ -6734,7 +7068,8 @@ async def api_wizard_robot(req: Request):
 
 @app.get("/setup/wizard", response_class=HTMLResponse)
 def wizard_page():
-    r = HTMLResponse(CSS + nav_html("st") + WIZARD_HTML)
+    r = HTMLResponse(CSS + nav_html("st") + WIZARD_HTML.replace("<div class=modebar id=modebar></div>",
+                                                                sim_card_html() + "<div class=modebar id=modebar></div>", 1))
     r.set_cookie(WIZ_COOKIE, "1", max_age=365 * 86400, samesite="lax")
     return r
 
@@ -6788,6 +7123,54 @@ def calib_rename_copies(old_cfg, new_cfg):
 
 
 # ----------------------------- 환경 API --------------------------------------
+@app.get("/api/sim")
+def api_sim():
+    return sim_state()
+
+
+@app.post("/api/sim/start")
+async def api_sim_start(request: Request):
+    b = await request.json()
+    robot = b.get("robot") or CFG.get("robot") or "so101"
+    mode = b.get("mode") or CFG.get("mode") or "single"
+    try:
+        return sim_start(robot, mode)
+    except (ValueError, RuntimeError, JobStartError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/sim/stop")
+def api_sim_stop():
+    try:
+        return sim_stop()
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+
+
+@app.post("/api/sim/cmd")
+async def api_sim_cmd(request: Request):
+    b = await request.json()
+    st = sim_state()
+    if not st.get("on"):
+        return JSONResponse({"error": "가상 장치가 꺼져 있습니다"}, status_code=400)
+    cmd, n = b.get("cmd"), b.get("board")
+    nb = len(st.get("ports", []))
+    if cmd == "a":
+        sim_send("a on" if b.get("on") else "a off")
+    elif cmd in ("w", "v", "t") and isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= nb:
+        if cmd == "w":
+            sim_send(f"w {n}")
+        else:
+            v = b.get("value")
+            lim = (0, 25) if cmd == "v" else (0, 120)
+            if not isinstance(v, (int, float)) or isinstance(v, bool) or not lim[0] <= v <= lim[1]:
+                return JSONResponse({"error": "값이 잘못됐습니다"}, status_code=400)
+            sim_send(f"{cmd} {n} {v}")
+    else:
+        return JSONResponse({"error": "명령이 잘못됐습니다"}, status_code=400)
+    return {"ok": True}
+
+
 @app.get("/api/envs")
 def api_envs():
     return {"active": env_name(), "envs": list_envs()}
@@ -9605,24 +9988,36 @@ def worker_record(jid):
         fps, task = int(spec["fps"]), spec["task"]
         ept = spec["episode_time_s"]
 
-        # 팔로워 버스 — 대기 중에만 온도를 읽습니다. Feetech 는 반이중 버스라
-        # 녹화 루프와 동시에 읽으면 패킷이 섞입니다. 반드시 record_loop 바깥에서.
+        # 서보 상태 감시 — 팔로워 버스의 온도·전압·보호 플래그를 record_loop 안(get_observation 직후)에서
+        # 1초마다 읽습니다. 반이중 버스라 다른 스레드에서 읽으면 패킷이 섞이므로 반드시 루프와 같은 스레드에서.
         if hasattr(robot, "left_arm"):
             fbuses = [("left", robot.left_arm.bus), ("right", robot.right_arm.bus)]
         else:
             fbuses = [("", robot.bus)]
+        guard = openmimic_health.HealthGuard(fbuses)
+        try:
+            guard.start()
+        except Exception as e:      # noqa: BLE001 — 감시를 못 켜도 수집은 계속 (화면에 표시)
+            logging.warning(f"서보 상태 감시를 켜지 못했습니다: {e}")
+            guard = None
+        obs_fn = robot.get_observation
 
-        def read_temps():
-            out = {}
-            for pfx, bus in fbuses:
-                try:
-                    for k, v in bus.sync_read("Present_Temperature", normalize=False).items():
-                        out[f"{pfx}_{k}" if pfx else k] = int(v)
-                except Exception:
-                    pass
-            if out:
-                status["temp"] = out
-                status["maxtemp"] = max(out.values())
+        def guarded_obs():
+            o = obs_fn()
+            if guard is not None:
+                why = guard.poll()
+                if why:
+                    # 녹화 중이던 에피소드는 버리고 수집을 끝냅니다 ('수집 끝내기' 와 같은 경로) — 이상 구간을 남기지 않음
+                    logging.warning(f"서보 상태 이상으로 수집을 멈춥니다: {why}")
+                    status["health_stop"] = why
+                    on_key("q")
+                hs = guard.state()
+                status["health"] = hs
+                if hs["temp"]:
+                    status["temp"], status["maxtemp"] = hs["temp"], hs["maxtemp"]
+            return o
+
+        robot.get_observation = guarded_obs
 
         def idle(last=""):
             """대기(READY). 기록하지 않고 리더 팔로우만 유지합니다.
@@ -9635,7 +10030,6 @@ def worker_record(jid):
                             teleop_action_processor=tap, robot_action_processor=rap,
                             robot_observation_processor=rop, teleop=teleop,
                             control_time_s=READY_CHUNK_S, single_task=task)
-                read_temps()
                 put()
             events["exit_early"] = False
             events["rerecord_episode"] = False
@@ -9753,6 +10147,7 @@ COLLECT_RUN_HTML = """
       <span id=lastbox style="display:none">직전 <b id=last></b></span>
     </div>
     <div class=statline id=temps style="margin-top:6px"></div>
+    <p id=health class=badge style="display:none;margin-top:8px"></p>
     <p id=err class="badge b-bad" style="display:none;margin-top:10px"></p>
   </div>
   <div class=cams id=cams></div>
@@ -9876,8 +10271,14 @@ function paint(d){
     ? '<span>모터 온도</span>'+names.map(n=>{
         const v=t[n], c = v>=65?'hot':v>=55?'warn':'';
         return '<span class="tchip '+c+'">'+n+' '+v+'&deg;</span>';
-      }).join('')
+      }).join('') + (s.health&&s.health.minvolt!=null?'<span>최저 전압 '+s.health.minvolt+' V</span>':'')
     : '';
+  const hs=s.health, hb=$('health');
+  if(s.health_stop){ hb.style.display=''; hb.className='badge b-bad';
+    hb.textContent='서보 상태 이상으로 수집을 멈췄습니다 (녹화 중이던 에피소드는 버림): '+s.health_stop; }
+  else if(hs&&hs.msgs&&hs.msgs.length){ hb.style.display=''; hb.className='badge '+(hs.level==='stop'?'b-bad':'b-warn');
+    hb.textContent='서보 상태: '+hs.msgs.join(' · '); }
+  else hb.style.display='none';
   if(s.err){ $('err').style.display=''; $('err').textContent=s.err; } else { $('err').style.display='none'; }
   if(!camsBuilt && s.cams && s.cams.length) buildCams(s.cams);
   $('tail').textContent=d.tail||'';

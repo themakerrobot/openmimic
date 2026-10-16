@@ -12,9 +12,11 @@
 
 로봇 연결·max_relative_target·중지(SIGINT) 시 시작 자세 복귀·토크 해제는 lerobot 코드 그대로입니다.
 이 파일은 관찰만 합니다 — 로봇에 보내는 명령을 바꾸지 않습니다.
+서보 상태 감시(openmimic_health)가 정지 판정을 내면 중지 버튼과 같은 SIGINT 를 자기 자신에게 보냅니다.
 """
 import json
 import os
+import signal
 import sys
 import threading
 import time
@@ -66,6 +68,7 @@ class Monitor:
         self.status = {"phase": "loading", "t0": time.time(), "run_t0": None, "engine": engine,
                        "device": device, "precision": precision, "err": ""}
         self.extra = None                      # OVEngine 같은 곳에서 추가 통계 (callable)
+        self.guard = None                      # openmimic_health.HealthGuard — 연결 뒤 생성
         self.on = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -77,6 +80,12 @@ class Monitor:
 
         def get_observation(*a, **k):
             o = g(*a, **k)
+            if mon.guard is not None:          # 제어 루프와 같은 스레드 — 반이중 버스에서 안전
+                why = mon.guard.poll()
+                if why:
+                    say(f"[openmimic] 서보 상태 이상으로 멈춥니다: {why}")
+                    mon.set(health_stop=why)
+                    os.kill(os.getpid(), signal.SIGINT)     # 작업 탭 '중지' 와 같은 경로 (시작 자세 복귀·토크 해제)
             mon.ticks.append(time.monotonic())
             for key, v in o.items():
                 if getattr(v, "ndim", 0) == 3:
@@ -91,6 +100,16 @@ class Monitor:
         def connect(*a, **k):
             mon.set(phase="connecting")
             r = c(*a, **k)
+            try:
+                import openmimic_health
+                buses = ([("left", robot.left_arm.bus), ("right", robot.right_arm.bus)]
+                         if hasattr(robot, "left_arm") else [("", robot.bus)])
+                guard = openmimic_health.HealthGuard(buses)
+                guard.start()
+                mon.guard = guard
+            except Exception as e:      # noqa: BLE001 — 감시를 못 켜도 실행은 계속 (화면에 표시)
+                say(f"[openmimic] 서보 상태 감시를 켜지 못했습니다: {e}")
+                mon.set(health_err=str(e)[:200])
             mon.set(phase="running", run_t0=time.time())
             return r
 
@@ -145,6 +164,8 @@ class Monitor:
         st["obs"] = _joints(self.obs)
         st["act"] = _joints(self.act)
         st["cams"] = sorted(self.frames)
+        if self.guard is not None:
+            st["health"] = self.guard.state()
         if self.extra:
             try:
                 st.update(self.extra())
@@ -204,6 +225,8 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
+    import openmimic_simcam
+    openmimic_simcam.install()          # 가상 카메라 경로(openmimic_sim/cam_*)면 합성 영상
     lw, rest = _pop_opts(argv, "--openmimic.")
     ov_opts, rest = _pop_opts(rest, "--ov.")
     engine = (lw.get("engine") or ("ov" if ov_opts else "torch")).lower()

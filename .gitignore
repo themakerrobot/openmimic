@@ -18,6 +18,10 @@ openmimic_envs/
 openmimic_projects.json
 openmimic_dsmeta.json
 openmimic_wizard.json
+openmimic_power.json
+openmimic_trials.json
+openmimic_pip_constraint.txt
+openmimic_token.txt
 *.log
 *.pid
 
@@ -28,6 +32,7 @@ openmimic_config.json
 # 가상 팔 (tools_simarms.py 실행 중에만 생김)
 openmimic_sim/
 openmimic_sim.json
+openmimic_sim.tmp
 
 # 기기별 설정(포트·카메라 시리얼 포함) — 어떤 이름이든 커밋하지 않습니다
 *_config.json

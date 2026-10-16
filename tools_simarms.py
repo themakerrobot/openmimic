@@ -14,11 +14,14 @@
   - 처음에는 공장 상태(캘리브레이션 없음)입니다. 전압은 팔로워 12 V, 리더 5 V (SO) 로 보고합니다.
   - Homing_Offset 을 실제처럼 반영합니다 (Feetech: Present = Actual - Homing, Dynamixel: Present = Actual + Homing).
   - 토크가 켜지면 목표 위치로 천천히 움직입니다.
-  - 손으로 움직이는 대신 콘솔 명령을 씁니다:
-        w <번호>   그 보드의 관절을 양 끝까지 한 번 쓸기 (포트 찾기·캘리브레이션·확인 단계용)
-        a          리더를 계속 천천히 움직이기 켜기/끄기 (Control 리더 팔로우·Collect 용)
-        l          보드 목록
-        q          끝내기
+  - 손으로 움직이는 대신 콘솔 명령을 씁니다 (OpenMimic 화면의 '가상 장치' 막대도 같은 명령을 openmimic_sim/cmd 로 보냅니다):
+        w <번호>          그 보드의 관절을 양 끝까지 한 번 쓸기 (포트 찾기·캘리브레이션·확인 단계용)
+        a [on|off]        리더를 계속 천천히 움직이기 켜기/끄기 (제어 리더 팔로우·수집 용)
+        v <번호> <V>      그 보드의 전압을 바꿔 보고 (어댑터 혼용·전원 강하 흉내 — 서보 상태 감시 시험용)
+        t <번호> <°C>     그 보드의 온도를 바꿔 보고 (과열 흉내)
+        l                 보드 목록
+        q                 끝내기
+  - 가상 카메라도 함께 만듭니다 (openmimic_sim/cam_<이름>). 영상은 openmimic_simcam 이 합성합니다.
   - 모터 ID 세팅(보드레이트·ID 변경)은 흉내내지 않습니다.
 
 포트 경로는 레포 안의 openmimic_sim/<이름> 심볼릭 링크로 고정됩니다 — 껐다 켜도 같은 경로라 다시 지정할 필요가 없습니다.
@@ -202,6 +205,7 @@ class DxlServo:
         self.w(48, 4095, 4); self.w(52, 0, 4)
         self.w(144, volt, 2)
         self.w(146, 32, 1)
+        self.w(31, 70, 1)                 # Temperature_Limit — 가상 값 (실제 모델별 공장값은 e-Manual 확인)
 
     def w(self, a, v, n):
         v = int(v) & ((1 << (8 * n)) - 1)
@@ -349,6 +353,20 @@ class SimArm:
         self.wiggle_t0 = time.monotonic()
         self.wiggle_until = self.wiggle_t0 + sec
 
+    def set_volt(self, volt):
+        """보드 전체 전압을 바꿔 보고합니다 (0.1 V 단위 레지스터)."""
+        with self.lock:
+            for s in self.board.servos.values():
+                if isinstance(s, FeetechServo):
+                    s.w(62, int(round(volt * 10)), 1)
+                else:
+                    s.w(144, int(round(volt * 10)), 2)
+
+    def set_temp(self, temp):
+        with self.lock:
+            for s in self.board.servos.values():
+                s.w(63 if isinstance(s, FeetechServo) else 146, int(temp), 1)
+
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description="가상 팔 — 실제 팔 없이 OpenMimic 시험")
@@ -360,17 +378,33 @@ def main(argv=None):
     sides = ["main"] if a.mode == "single" else ["left", "right"]
     SIM_DIR.mkdir(exist_ok=True)
     for f in SIM_DIR.iterdir():
-        if f.is_symlink():
+        if f.is_symlink() or f.name.startswith("cam_") or f.name == "cmd":
             f.unlink()
     arms = [SimArm(a.robot, s, r) for s in sides for r in ("follower", "leader")]
     for arm in arms:
         os.symlink(arm.dev, arm.link)
+    # 가상 카메라 — 경로 표시용 빈 파일. 영상은 이 경로를 연 쪽에서 openmimic_simcam 이 합성합니다
+    cam_names = ["top", "wrist"] if a.mode == "single" else ["top", "left_wrist", "right_wrist"]
+    cams = []
+    for n in cam_names:
+        f = SIM_DIR / f"cam_{n}"
+        f.write_text("")
+        cams.append({"name": n, "path": str(f)})
     label = {"so101": "SO-ARM101", "omx": "OMX"}[a.robot]
-    SIM_FILE.write_text(json.dumps({
-        "pid": os.getpid(), "robot": a.robot, "mode": a.mode,
-        "ports": [{"path": str(arm.link), "dev": arm.dev,
-                   "label": f"가상 {label} {arm.side} {'팔로워' if arm.role == 'follower' else '리더'}"}
-                  for arm in arms]}, ensure_ascii=False, indent=1))
+    state = {"auto": a.auto, "volt": {}, "temp": {}}
+
+    def write_state():
+        tmp = SIM_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({
+            "pid": os.getpid(), "robot": a.robot, "mode": a.mode, "auto": state["auto"],
+            "ports": [{"path": str(arm.link), "dev": arm.dev, "name": arm.name, "side": arm.side, "role": arm.role,
+                       "label": f"가상 {label} {arm.side} {'팔로워' if arm.role == 'follower' else '리더'}",
+                       "volt": state["volt"].get(arm.name), "temp": state["temp"].get(arm.name)}
+                      for arm in arms],
+            "cams": cams}, ensure_ascii=False, indent=1))
+        os.replace(tmp, SIM_FILE)
+
+    write_state()
 
     def cleanup(*_):
         try:
@@ -382,11 +416,15 @@ def main(argv=None):
                 arm.link.unlink()
             except OSError:
                 pass
+        for c in cams:
+            try:
+                os.unlink(c["path"])
+            except OSError:
+                pass
         os._exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
     signal.signal(signal.SIGTERM, cleanup)
-    state = {"auto": a.auto}
 
     def loop():
         last = time.monotonic()
@@ -403,32 +441,64 @@ def main(argv=None):
         print(f"\n가상 {label} {'양팔' if a.mode == 'bimanual' else '한팔'} — OpenMimic 포트 목록에 '가상 …' 으로 나타납니다")
         for i, arm in enumerate(arms, 1):
             print(f"  {i}. {arm.name:16s} {arm.link}  (→ {arm.dev})")
-        print("명령: w <번호> 쓸기 · a 리더 자동 움직임 " + ("[켜짐]" if state["auto"] else "[꺼짐]") + " · l 목록 · q 끝")
+        print("명령: w <번호> 쓸기 · a 리더 자동 움직임 " + ("[켜짐]" if state["auto"] else "[꺼짐]")
+              + " · v <번호> <V> 전압 · t <번호> <°C> 온도 · l 목록 · q 끝", flush=True)
 
-    show()
-    interactive = sys.stdin.isatty()
-    while True:
-        if not interactive:
-            time.sleep(1)
-            continue
-        r, _, _ = select.select([sys.stdin], [], [], 0.5)
-        if not r:
-            continue
-        cmd = sys.stdin.readline().strip().split()
+    def board(tok):
+        return arms[int(tok) - 1] if tok.isdigit() and 1 <= int(tok) <= len(arms) else None
+
+    def run(cmd):
         if not cmd:
-            continue
+            return
         if cmd[0] == "q":
             cleanup()
         elif cmd[0] == "l":
             show()
         elif cmd[0] == "a":
-            state["auto"] = not state["auto"]
-            print("리더 자동 움직임:", "켜짐" if state["auto"] else "꺼짐")
-        elif cmd[0] == "w" and len(cmd) > 1 and cmd[1].isdigit() and 1 <= int(cmd[1]) <= len(arms):
-            arms[int(cmd[1]) - 1].wiggle()
-            print(f"{arms[int(cmd[1]) - 1].name} 쓰는 중 (4초)")
+            state["auto"] = (cmd[1] == "on") if len(cmd) > 1 and cmd[1] in ("on", "off") else not state["auto"]
+            print("리더 자동 움직임:", "켜짐" if state["auto"] else "꺼짐", flush=True)
+        elif cmd[0] == "w" and len(cmd) > 1 and board(cmd[1]):
+            board(cmd[1]).wiggle()
+            print(f"{board(cmd[1]).name} 쓰는 중 (4초)", flush=True)
+        elif cmd[0] in ("v", "t") and len(cmd) > 2 and board(cmd[1]):
+            try:
+                val = float(cmd[2])
+            except ValueError:
+                print("값은 숫자", flush=True)
+                return
+            arm = board(cmd[1])
+            if cmd[0] == "v" and 0 <= val <= 25:
+                arm.set_volt(val)
+                state["volt"][arm.name] = val
+                print(f"{arm.name} 전압 {val:g} V 로 보고", flush=True)
+            elif cmd[0] == "t" and 0 <= val <= 120:
+                arm.set_temp(val)
+                state["temp"][arm.name] = val
+                print(f"{arm.name} 온도 {val:g} °C 로 보고", flush=True)
         else:
-            print("명령: w <번호> · a · l · q")
+            print("명령: w <번호> · a [on|off] · v <번호> <V> · t <번호> <°C> · l · q", flush=True)
+            return
+        write_state()
+
+    show()
+    interactive = sys.stdin.isatty()
+    cmd_file = SIM_DIR / "cmd"
+    while True:
+        # 화면(OpenMimic)이 보내는 명령 — 한 줄에 하나
+        try:
+            if cmd_file.exists():
+                lines = cmd_file.read_text().splitlines()
+                cmd_file.unlink()
+                for line in lines:
+                    run(line.strip().split())
+        except OSError:
+            pass
+        if not interactive:
+            time.sleep(0.2)
+            continue
+        r, _, _ = select.select([sys.stdin], [], [], 0.2)
+        if r:
+            run(sys.stdin.readline().strip().split())
 
 
 if __name__ == "__main__":

@@ -93,6 +93,7 @@ pip install "openvino>=2025.4" "nncf>=2.19"
 | 캘리브레이션 | `data/hf/lerobot/calibration/robots/so_follower/<캘리브 id>.json` 등 (기종·역할별 폴더) |
 | 학습한 모델 | `outputs/<이름>/checkpoints/<step>/pretrained_model/` |
 | 설정 · 환경 · 프로젝트 | `openmimic_config.json`, `openmimic_envs/`, `openmimic_projects.json` |
+| 전원 점검 기록 (팔별 마지막 서보 전압) | `openmimic_power.json` |
 | 작업 로그 | `openmimic_jobs/<작업 id>.log` |
 | OpenMimic 자체 로그 · pid | `openmimic.log` · `openmimic_server.pid` (`openmimic.sh` 가 씀) |
 

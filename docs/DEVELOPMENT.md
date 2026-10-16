@@ -10,6 +10,7 @@
 - [캘리브레이션 (SO-ARM101)](#캘리브레이션-so-arm101)
 - [연결·토크 순서](#연결토크-순서)
 - [추종 오차 감시](#추종-오차-감시)
+- [서보 상태 감시 · 전원 점검](#서보-상태-감시--전원-점검)
 - [수집 worker](#수집-worker)
 - [팔 불량 점검 판정 근거](#팔-불량-점검-판정-근거)
 - [보안·동시성](#보안동시성)
@@ -20,6 +21,7 @@
 - [Hugging Face Hub · HF Jobs](#hugging-face-hub--hf-jobs)
 - [데이터셋 복구·사전 점검·수집 신호음 등](#데이터셋-복구사전-점검수집-신호음-등)
 - [화면 구조 — 탭·첫 실행·막힘 안내](#화면-구조--탭첫-실행막힘-안내)
+- [가상 장치 (화면에서 켜기)](#가상-장치-화면에서-켜기)
 - [한/영 전환 (i18n)](#한영-전환-i18n)
 - [Intel 기기 학습 (XPU, 실험적)](#intel-기기-학습-xpu-실험적)
 - [lerobot 버전·설치](#lerobot-버전설치)
@@ -39,7 +41,9 @@
 | `openmimic_ov.py` | ACT·ACT2 → OpenVINO 변환·검증(`convert`), 장치 조회(`devices`), OpenVINO 추론으로 lerobot-rollout 실행(`rollout`). OpenMimic 은 이 파일을 별도 프로세스로 띄웁니다 |
 | `tools_jscheck.py` | 모든 페이지의 인라인 JS 를 `node --check` 로 파싱 검증 (`--en` 이면 영어 치환 후 검증) |
 | `openmimic_i18n_en.json` | 영어 화면 사전 — 한국어 조각 → 영어 (한/EN 버튼) |
-| `tools_simarms.py` | 가상 팔 — PTY 위에서 STS3215 / Dynamixel X 를 흉내. 켜 있으면 `openmimic_sim.json` 에 포트를 알리고 OpenMimic 포트 목록에 추가됨 |
+| `tools_simarms.py` | 가상 팔 — PTY 위에서 STS3215 / Dynamixel X 를 흉내. 켜 있으면 `openmimic_sim.json` 에 포트·가상 카메라를 알리고 OpenMimic 포트 목록에 추가됨. 셋업 화면의 '가상 장치 켜기' 가 작업으로 띄움 |
+| `openmimic_simcam.py` | 가상 카메라 — `openmimic_sim/cam_<이름>` 경로면 합성 영상, 아니면 원래 `cv2.VideoCapture` |
+| `openmimic_health.py` | 서보 상태 감시 — 시작 전 전원 점검(`power_check` 계열)과 실행 중 온도·전압·보호 플래그 감시(`HealthGuard`) |
 | `plugins/lerobot_robot_bi_omx/` | 양팔 OMX 팔로워 `bi_omx_follower` (lerobot 플러그인) |
 | `plugins/lerobot_teleoperator_bi_omx/` | 양팔 OMX 리더 `bi_omx_leader` |
 | `plugins/lerobot_policy_act2/` | ACT2 정책 `act2` — lerobot ACT 블록을 import 하고 증강·청크 보간·DINOv2 백본·flow 헤드를 설정으로 붙임 |
@@ -211,6 +215,42 @@ lerobot `bus.connect()` 는 모터 확인 실패 때 포트를 연 채로 예외
 | 0 | — | 서보가 보호로 토크를 뺌 — 토크 껐다 켜기, 안 되면 전원 재투입 |
 | 1 | 큼 | 기계적으로 막혀 버티는 중 (과열 위험) |
 | 1 | ~0 | 명령을 안 받음 (배선·ID·펌웨어) |
+
+## 서보 상태 감시 · 전원 점검
+
+`openmimic_health.py`. 저가 서보 팔에서 실제로 고장 나는 지점(어댑터 혼용, 과열, 다채널 전원 강하)을 시작 전·실행 중에 봅니다.
+
+**시작 전 전원 점검** — 제어(팔 연결 직후), 수집·실행(작업을 띄우기 전, `power_preflight`)에서 팔(보드)마다 서보 전압을 읽습니다.
+수집·실행은 `tools_armcheck` / `tools_dxlcheck` 의 `BusIO` 로 포트를 잠깐 열어 읽기만 합니다 (쓰기 없음, 토크 무변경).
+
+| 조건 | 결과 | 근거 |
+|---|---|---|
+| 서보 `Max_Voltage_Limit` 초과 / `Min_Voltage_Limit` 미만 | 막음 | [EEPROM] 서보 자신의 보호값 |
+| SO-ARM101 리더가 12V 계통 (중앙값 7.0 V 이상) | 막음 — 어댑터가 바뀐 것 | [Seeed] 7.0 V 경계 |
+| SO-ARM101 팔로워가 5V 계통 / 계통 범위(4.5~5.5, 10.5~13.5 V) 밖 | 경고 | [Seeed] |
+| 같은 팔(역할·캘리브 id)의 지난번 전압과 20% 이상 다름 | 경고 | [경험값] `openmimic_power.json` 에 기억 |
+
+OMX(Dynamixel)는 계통 판정 출처가 없어 EEPROM 한계값과 지난번 비교만 씁니다.
+
+**실행 중 감시 (`HealthGuard`)** — 팔로워 버스에서 `PERIOD_S`(1 s)마다 온도·전압·보호 플래그(Feetech `Status`, Dynamixel
+`Hardware_Error_Status`)를 `sync_read` 합니다. 반이중 버스라 다른 스레드에서 읽으면 패킷이 섞이므로, 제어 루프와 같은 스레드에서
+`get_observation` 직후에 `poll()` 을 부릅니다 (실행 = `openmimic_rollout` 의 `get_observation` 감싸기, 수집 = worker 의 같은 감싸기,
+제어 = 팔 루프의 1 초 읽기 자리). 연결 직후 EEPROM 한계값(`Max_Temperature_Limit`·`Temperature_Limit`, 전압 한계)과
+기준 전압(첫 측정 중앙값)을 잡습니다.
+
+| 조건 | 수준 | 근거 |
+|---|---|---|
+| 새로 선 보호 비트 (과열·과부하·과전류·입력 전압 등) | 정지 | [SDK] / [ROBOTIS] — 시작 때 이미 서 있던 비트는 경고만 |
+| 온도 ≥ 한계 − 5 °C / ≥ 한계 − 10 °C | 정지 / 경고 | [EEPROM] + [경험값] 여유 (STS3215 공장 한계 70 → 경고 60 = Seeed 권장 상한) |
+| 전압 < `Min_Voltage_Limit` 또는 > `Max_Voltage_Limit` | 정지 | [EEPROM] |
+| 시작 때보다 20% / 10% 이상 강하 | 정지 / 경고 | [경험값] |
+
+EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 않습니다. 정지하면:
+- **실행** — 자기 자신에게 SIGINT (작업 탭 '중지' 와 같은 경로: lerobot 이 시작 자세 복귀·토크 해제)
+- **수집** — `q` 와 같은 경로 (녹화 중이던 에피소드는 버리고 끝냄 — 이상 구간을 데이터에 남기지 않음)
+- **제어** — 토크는 두고(팔이 떨어지지 않게) 리더 팔로우를 끄고 명령을 현재 위치로 고정, 정지 조건이 풀릴 때까지 슬라이더 명령 무시
+
+가상 팔에서 잰 비용: 실행 제어 주기 29.8 Hz (목표 30). 실제 팔에서의 지연·오탐 여부는 아직 실측 전입니다.
 
 ## 수집 worker
 
@@ -433,6 +473,22 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   시작 로그의 접속 주소는 `hostname -I`(없으면 기본 경로의 내 주소)로 찾습니다.
 - **모바일**(820px 이하): 넓은 표는 카드 안에서만 가로로 밀리고(`.card{overflow-x:auto}`), 긴 경고 배지(`p.badge`)는 줄바꿈합니다.
   상태 칩은 포트 미설정 · 작업 상태 · 한/EN 만 남깁니다. 390px 폭에서 전 화면 가로 넘침 0 을 확인했습니다.
+
+## 가상 장치 (화면에서 켜기)
+
+팔·카메라 없이 셋업부터 실행까지 해 보는 기능. `POST /api/sim/start {robot, mode}` 가 `tools_simarms.py` 를 작업(`sim`)으로 띄우고
+`openmimic_sim.json` 이 생길 때까지 기다린 뒤, 환경을 `sim-<기종>-<모드>` 로 바꿉니다.
+
+- 켜기 전 환경을 `sync_active_env()` 로 그 환경 파일에 보관하고, 가상 환경에 `sim_prev_env` 로 적어 둡니다.
+  `POST /api/sim/stop` 은 가상 팔을 쓰는 연결·작업을 정리하고 그 환경으로 되돌립니다. 가상 장치가 죽은 채 가상 환경이 남아 있으면
+  셋업 화면이 '다시 켜기 / 전에 쓰던 환경으로' 를 보여 줍니다.
+- 포트는 `openmimic_sim/<side>_<role>` 링크라 껐다 켜도 경로가 같고, 캘리브 id 는 `sim_follower` 처럼 따로 둬 실제 팔 파일과 섞이지 않습니다.
+- 화면 아래 막대 → `POST /api/sim/cmd` → `openmimic_sim/cmd` 에 한 줄씩 (`w <보드>` 쓸기, `a on|off` 리더 자동, `v <보드> <V>`, `t <보드> <°C>`).
+  전압·온도 명령은 서보 상태 감시를 시험하는 용도입니다.
+- 가상 카메라(`openmimic_simcam`)는 `openmimic_sim/cam_<이름>` 경로를 연 쪽에서 합성 영상을 만듭니다 (서버·수집 worker 는 `main.py` import 때,
+  실행은 `openmimic_rollout.main()` 에서 설치). `cv2.VideoCapture` 를 Python 에서 **상속하면** OpenCV 바인딩의 객체 해제와 맞지 않아
+  제어 탭을 빠르게 열고 닫을 때 서버가 segfault 로 죽었습니다 (4회 중 2회 재현). 그래서 상속하지 않고, 가상 경로면 별도 객체·아니면
+  원래 `cv2.VideoCapture` 객체를 돌려주는 생성 함수 + `isinstance` 를 통과시키는 메타클래스로 바꿨습니다 (같은 시험 5회 모두 정상).
 
 ## 한/영 전환 (i18n)
 

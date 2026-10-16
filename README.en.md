@@ -110,6 +110,7 @@ the start button on that screen is disabled and a **large button shows where to 
 ### Setup
 
 **Start setup wizard** at the top is the way to connect arms the first time; this screen is for registering cameras and environments and for detailed settings.
+If no arms are connected, a **try with virtual devices** card appears below it ([Trying it without arms](#trying-it-without-arms--virtual-devices)).
 
 | Section | What it does |
 |---|---|
@@ -235,17 +236,32 @@ On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT
 
 Details and measurements: **[docs/INTEL.md](docs/INTEL.md)** (Korean)
 
-## Trying it without arms — virtual arms
+## Trying it without arms — virtual devices
 
-Without real arms you can still run the setup wizard, calibration, control and collection end to end. In a **separate terminal** from OpenMimic:
+You can go from setup to rollout without any arms or cameras — useful for preparing a class or a demo.
 
-```bash
-source ~/project/openmimic/activate.sh
-python tools_simarms.py --robot so101 --mode bimanual    # SO-ARM101 bimanual
-python tools_simarms.py --robot omx   --mode single      # OMX single
-```
+1. **Turn on virtual devices** at the top of **Setup** (or the setup wizard) — choose the arm type (SO-ARM101 / OMX) and single/bimanual
+2. Virtual arms (leader and follower) and virtual cameras are created, and the environment switches to `sim-<type>-<mode>`.
+   Your real arm settings are kept, and calibration files are stored separately so they never mix
+3. In the **virtual devices** bar at the bottom, use **Move follower / Move leader** instead of your hand (find port, calibration, verify),
+   and **Leader auto-motion** for Control and Collect
+4. **Simulate faults** triggers overheating or a voltage drop so you can see how servo health monitoring stops things
+5. When done, **Turn off virtual devices** — you return to the previous environment
 
-While it runs, it appears in the port list as a **virtual** board and disappears when stopped. Instead of hands, use console commands (`w <number>` sweeps a joint, `a` moves the leader automatically).
+![Virtual devices](docs/img/sim.png)
+
+## Servo health monitoring · power check
+
+OpenMimic watches the points where low-cost servo arms actually fail: swapped adapters, overheating and power sag.
+
+- **Power check before starting** — when Control, Collect or Rollout starts, the servo voltage of each arm is read.
+  - **Blocked**: 12V on an SO-ARM101 leader (adapters swapped), or above the servo's own voltage limit
+  - **Warning**: follower on 5V, out of range, or very different from last time
+- **Monitoring while running** — the follower's temperature, voltage and protection flags are read every second.
+  - **Rollout**: **stops automatically** (same as the stop button) near the servo temperature limit, on a large voltage drop or a servo protection trip
+  - **Collect**: under the same conditions, the episode being recorded is discarded and collection ends
+  - **Control**: torque stays on so the arm does not drop; only leader follow and sliders stop
+- Only the limits stored in the servo and sourced values are used — details in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) (Korean)
 
 ## Screen language — 한/EN
 
@@ -267,6 +283,8 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make the setup match training |
 | Screen looks wrong after an update | `./openmimic.sh restart` + hard refresh in the browser (Ctrl+Shift+R) |
 | "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` |
+| "Power check failed — not started" | The leader and follower adapters are swapped or the voltage is outside the servo limit. **Disconnect power first** and check the adapter labels |
+| "Stopped automatically due to a servo fault" | For overheating, let it cool and look for jams or overload; for a voltage drop, check the adapter current rating and connectors |
 
 ## Documents
 
