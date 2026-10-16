@@ -25,8 +25,16 @@ need_env() {
   if [[ ! -f "${DIR}/activate.sh" ]]; then
     echo "activate.sh 가 없습니다 — 먼저 설치하세요: ${DIR}/lerobot_conda.sh"; exit 1
   fi
+  # conda 활성화·비활성화 스크립트(예: XPU 휠과 함께 오는 oneAPI 의 mpivars.*.sh)는 정의 안 된 변수를 읽습니다.
+  # 이 파일의 set -u 가 그대로 걸려 있으면 거기서 셸이 조용히 끝나므로, 환경을 켜는 동안만 풉니다.
+  set +u
   # shellcheck disable=SC1091
-  source "${DIR}/activate.sh" || { echo "환경을 켜지 못했습니다 (activate.sh)"; exit 1; }
+  source "${DIR}/activate.sh"
+  local rc=$?
+  set -u
+  if (( rc != 0 )) || [[ "${CONDA_DEFAULT_ENV:-}" != "openmimic" ]]; then
+    echo "환경을 켜지 못했습니다 (activate.sh) — 터미널에서 source ${DIR}/activate.sh 가 되는지 확인하세요"; exit 1
+  fi
   cd "${DIR}" || exit 1
 }
 
