@@ -25,6 +25,7 @@ Diffusion·SmolVLA 패키지까지 설치합니다. 기기 종류는 자동으�
 
 - 자동 판정이 틀리면 `OPENMIMIC_PLATFORM=intel ./lerobot_conda.sh` 처럼 지정합니다.
 - Intel 내장 GPU 로 학습까지 해 보려면 `OPENMIMIC_PLATFORM=intel OPENMIMIC_TORCH=xpu ./lerobot_conda.sh` (**실험적** — [INTEL.md](INTEL.md)).
+  이미 CPU 휠로 설치한 기기에서 다시 돌려도 됩니다 — 깔린 torch 종류가 다르면 지우고 XPU 휠로 바꿉니다.
 - Ubuntu 22.04 / 24.04 / 26.04 대상. 파이썬은 conda 안의 3.12 라 우분투 기본 파이썬과 무관합니다.
   우분투 버전마다 이름이 바뀐 apt 패키지는 대체 이름으로 다시 시도하고, 없으면 경고만 남기고 계속합니다.
 

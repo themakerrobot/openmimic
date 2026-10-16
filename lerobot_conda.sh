@@ -164,6 +164,14 @@ python -m pip install --upgrade pip setuptools wheel
 
 # ------------------------------------------------------------------ 3. PyTorch
 log "3. PyTorch 설치 (${PLATFORM})"
+# 다시 설치할 때 다른 종류의 휠(예: 2.11.0+cpu)이 남아 있으면 pip 가 "이미 만족" 으로 보고 바꾸지 않습니다 → 먼저 지웁니다
+if [[ "${PLATFORM}" == "intel" ]]; then
+  OLD_LOCAL="$(python -c "import torch;v=torch.__version__;print(v.split('+')[1] if '+' in v else '')" 2>/dev/null || true)"
+  if [[ -n "${OLD_LOCAL}" && "${OLD_LOCAL}" != "${TORCH_FLAVOR}" ]]; then
+    echo "--- 기존 torch(+${OLD_LOCAL}) 를 지우고 ${TORCH_FLAVOR} 휠로 바꿉니다"
+    pip uninstall -y torch torchvision
+  fi
+fi
 TORCH_OK=0
 for idx in "${TORCH_INDEXES[@]}"; do
   echo "--- 인덱스 시도: ${idx}"
