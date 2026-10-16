@@ -490,6 +490,33 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   제어 탭을 빠르게 열고 닫을 때 서버가 segfault 로 죽었습니다 (4회 중 2회 재현). 그래서 상속하지 않고, 가상 경로면 별도 객체·아니면
   원래 `cv2.VideoCapture` 객체를 돌려주는 생성 함수 + `isinstance` 를 통과시키는 메타클래스로 바꿨습니다 (같은 시험 5회 모두 정상).
 
+### 물리 시뮬레이션 (MuJoCo)
+
+`openmimic_mujoco.py`. SO-ARM101 한팔이고 `mujoco` 가 있으면 `tools_simarms.py --physics auto` 가 팔로워 서보의 '몸' 을
+MuJoCo 로 바꿉니다. 서보 프로토콜(PTY)은 그대로라 OpenMimic·lerobot 쪽 코드는 실제 팔과 같은 경로를 탑니다.
+
+- **모델**: `urdf/so101_new_calib.xml` (TheRobotStudio SO-ARM100 의 MJCF, Apache 2.0 — `meshdir` 만 `urdf/` 로).
+  책상·물체·목표·카메라는 `MjSpec` 으로 불러올 때 붙입니다. 그리퍼·턱 말고는 충돌을 꺼서 계산량을 줄였습니다.
+- **틱 ↔ 관절각**: `rad = (틱 − 2048) × 2π / 4096`. 팔로워 목표(Goal_Position + Homing)가 위치 액추에이터 명령(STS3215 값:
+  kp 998, 힘 제한 ±2.94 N·m — MJCF 원본), 관절각이 엔코더 값(Present_Position)이 됩니다. 토크가 꺼진 관절은 지금 자세를 유지하고,
+  마법사 '움직이기' 는 관절을 바로 놓습니다(텔레포트). 쓸기 범위는 MJCF 관절 범위라 리더·팔로워 캘리브레이션 범위가 같아집니다.
+- **렌더**: 별도 스레드가 top · wrist 를 그려 `/dev/shm/openmimic_sim/cam_<이름>.rgb`(머리 16 B + RGB)에 쓰고,
+  `openmimic_simcam` 이 그 파일을 읽어 카메라로 내줍니다. 백엔드는 별도 프로세스로 시험해 하드웨어 EGL → OSMesa 순으로 고릅니다
+  (MuJoCo 는 import 할 때 백엔드를 정함, 소프트웨어 EGL 은 OSMesa 보다 느림). 이 개발 서버(CPU 전용)는 OSMesa 로 320×240 한 장 약 80 ms.
+- **그립 보조**: 턱 충돌 모양이 메시의 볼록 껍질이라 마찰만으로는 큐브가 밀려납니다. 그리퍼가 닫히는 중이고 큐브 중심이
+  끝점(`gripperframe`) 3 cm 안이면 큐브를 그리퍼 좌표계에 고정하고, 다시 열리면 놓습니다.
+- **자동 시연**: IK(끝점 위치 + 그리퍼가 아래를 향하게, 감쇠 최소제곱)로 경유점(위 → 내려가 → 닫기 → 들기 → 목표 위 → 내려놓기 → 열기 → 시작 자세)을
+  만들고, 리더 엔코더를 그 궤적대로 움직입니다. 수집 worker 는 자동 녹화일 때 대기 중 `reset`, 녹화 시작에 `demo` 를 보냅니다.
+  무작위 큐브 위치 20개에서 시연 성공 20/20.
+- **판정**: 큐브가 초록 칸 안 + 책상 위 + 그리퍼가 놓음. 실행 시작 때 `reset` 을 보내고 그 뒤의 성공만 셉니다(`resets` 카운터).
+  `/api/rollout/status` 가 성공이면 시도를 기록하고 실행을 끝내며(SIGINT), 성공 없이 끝나면 실패로 기록합니다 (`auto: "sim"`).
+- **학습 속도**: 가속 장치 없는 CPU 4코어에서 ACT(카메라 2개 320×240, batch 8)는 스텝당 약 14 초입니다 (시뮬레이션 렌더와 CPU 를 나눠 씀).
+  시뮬레이션 데이터라도 실제로 쓸 만한 학습은 Intel GPU(XPU) 같은 가속 장치나 HF 작업이 필요합니다.
+- **확장**: `ROBOTS[이름]`(MJCF·관절·끝점·그리퍼 각도·시작 자세·카메라·틱 환산)과 `TASKS[이름]`(`Task` 상속:
+  build · bind · reset · plan · step · judge)을 따로 둡니다. 다른 로봇은 MJCF(또는 MuJoCo 가 읽는 URDF + 위치 액추에이터)와 프로필,
+  다른 과제는 `Task` 하나를 추가하면 수집·실행 화면이 그대로 씁니다. 로봇의 서보 프로토콜이 Feetech / Dynamixel 이 아니면
+  `tools_simarms.py` 에 보드 흉내를 추가해야 합니다.
+
 ## 한/영 전환 (i18n)
 
 화면 문자열은 소스에 한국어로 그대로 둡니다. 영어 모드(쿠키 `openmimic_lang=en`, 기본값은 `OPENMIMIC_LANG`)면 서버가 응답을 내보내기

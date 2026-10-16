@@ -1,6 +1,8 @@
 """OpenMimic 가상 카메라 — 가상 팔(tools_simarms)과 함께 쓰는 합성 영상 카메라.
 
-카메라 경로가 openmimic_sim/cam_<이름> 이면 실제 장치를 열지 않고 합성 영상을 돌려줍니다.
+카메라 경로가 openmimic_sim/cam_<이름> 이면 실제 장치를 열지 않고 가상 영상을 돌려줍니다.
+물리 시뮬레이션(openmimic_mujoco)이 켜져 있으면 그 렌더 화면(/dev/shm/openmimic_sim/cam_<이름>.rgb),
+아니면 움직이는 도형을 그린 합성 화면입니다.
 그 밖의 경로·번호는 원래 cv2.VideoCapture 객체가 그대로 만들어집니다 (실제 카메라는 전혀 바뀌지 않음).
 
     import openmimic_simcam; openmimic_simcam.install()     # cv2 를 쓰는 프로세스마다 한 번
@@ -17,6 +19,8 @@ from pathlib import Path
 
 SIM_DIR = Path(__file__).resolve().parent / "openmimic_sim"
 PREFIX = str(SIM_DIR / "cam_")
+FRAME_DIR = Path("/dev/shm/openmimic_sim") if Path("/dev/shm").is_dir() else SIM_DIR     # openmimic_mujoco 와 같은 곳
+MAGIC = 0x4F4D5331
 _installed = False
 
 
@@ -39,6 +43,7 @@ class SimCapture:
                    cv2.CAP_PROP_FOURCC: float(cv2.VideoWriter_fourcc(*"MJPG"))}
         self._open = True
         self._last = 0.0
+        self._mm = None
         h = zlib.crc32(name.encode())
         self._bg = (40 + h % 60, 40 + (h >> 8) % 60, 40 + (h >> 16) % 60)
 
@@ -55,10 +60,33 @@ class SimCapture:
     def getBackendName(self):
         return "OPENMIMIC_SIM"
 
+    def _rendered(self, w, h):
+        """물리 시뮬레이션 렌더 화면 (BGR) — 없으면 None."""
+        cv2, np = self._cv2, self._np
+        path = FRAME_DIR / f"cam_{self.name}.rgb"
+        try:
+            if self._mm is None or self._mm[0] != path.stat().st_ino:
+                mm = np.memmap(path, dtype=np.uint8, mode="r")
+                self._mm = (path.stat().st_ino, mm)
+            mm = self._mm[1]
+            magic, fw, fh, _seq = np.frombuffer(mm[:16].tobytes(), np.uint32)
+            if magic != MAGIC or mm.size < 16 + fw * fh * 3:
+                return None
+            img = np.array(mm[16:16 + fw * fh * 3]).reshape(fh, fw, 3)[:, :, ::-1]
+        except (OSError, ValueError):
+            self._mm = None
+            return None
+        if (fw, fh) != (w, h):
+            img = cv2.resize(img, (w, h))
+        return np.ascontiguousarray(img)
+
     def _frame(self):
         cv2, np = self._cv2, self._np
         w = int(self._p[cv2.CAP_PROP_FRAME_WIDTH])
         h = int(self._p[cv2.CAP_PROP_FRAME_HEIGHT])
+        img = self._rendered(w, h)
+        if img is not None:
+            return img
         img = np.empty((h, w, 3), np.uint8)
         img[:] = self._bg
         t = time.monotonic()

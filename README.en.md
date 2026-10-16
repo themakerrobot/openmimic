@@ -250,6 +250,24 @@ You can go from setup to rollout without any arms or cameras — useful for prep
 
 ![Virtual devices](docs/img/sim.png)
 
+### Physics simulation — collect, train and run without arms
+
+For an SO-ARM101 single arm you can turn on virtual devices with **physics simulation (MuJoCo)** (on by default).
+The follower becomes an SO-101 inside the simulation, and the cameras (top · wrist) show a table, a red cube and a green square.
+The task is **pick up the cube and place it in the green square**.
+
+1. Calibrate in the setup wizard (**Move** buttons in the bar)
+2. **Collect** — turn on **Record automatically with virtual demos** and start: for each episode the cube is placed anew,
+   the leader demonstrates (about 14 s), and recording continues by itself up to the target number of episodes
+3. **Training** — train ACT etc. on the collected dataset (same screen as with real arms)
+4. **Rollout** — the cube is placed anew at the start; once it is in the green square the attempt is **recorded as a success automatically**
+   and the run ends. A run that ends without success is recorded as a failure — the success rate builds up in the Models tab
+
+![Physics simulation](docs/img/sim_mujoco.png)
+
+- Models trained in simulation are for teaching and practicing the workflow; they are not meant for real arms as is
+- Camera images are rendered on the GPU (EGL). Without a GPU they are rendered on the CPU, which is slower
+
 ## Servo health monitoring · power check
 
 OpenMimic watches the points where low-cost servo arms actually fail: swapped adapters, overheating and power sag.

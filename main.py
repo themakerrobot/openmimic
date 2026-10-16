@@ -1975,6 +1975,14 @@ def sim_state():
     return d
 
 
+def sim_physics():
+    """MuJoCo 물리 시뮬레이션 가상 장치가 켜져 있고 지금 환경이 그것이면 상태(dict), 아니면 None."""
+    st = sim_state()
+    if st.get("on") and st.get("physics") == "mujoco" and env_name().startswith(SIM_ENV_PREFIX):
+        return st
+    return None
+
+
 def sim_env_name(robot, mode):
     return f"{SIM_ENV_PREFIX}{robot}-{mode}"
 
@@ -2001,7 +2009,12 @@ def sim_config(st, prev_env):
     return cfg
 
 
-def sim_start(robot, mode):
+def mujoco_ok():
+    import importlib.util
+    return importlib.util.find_spec("mujoco") is not None
+
+
+def sim_start(robot, mode, physics=True):
     if robot not in ROBOT_KINDS or mode not in ("single", "bimanual"):
         raise ValueError("기종·모드 값이 잘못됐습니다")
     if sim_state().get("on"):
@@ -2009,11 +2022,13 @@ def sim_start(robot, mode):
     busy = robot_busy()
     if busy:
         raise ValueError(f"팔을 쓰는 중입니다 ({busy['id']}) — 끝낸 뒤 켜세요")
-    jid = start_job("sim", [sys.executable, str(SIM_PY), "--robot", robot, "--mode", mode],
+    jid = start_job("sim", [sys.executable, str(SIM_PY), "--robot", robot, "--mode", mode,
+                            "--physics", "auto" if physics else "none",
+                            "--cam", f"{SIM_CAM['width']}x{SIM_CAM['height']}"],
                     cwd=str(SIM_PY.parent), spec={"robot": robot, "mode": mode})
     pid = load_json(JOB_DIR / f"{jid}.json", {}).get("pid")
     st = {}
-    for _ in range(50):                    # 가상 보드(PTY)와 상태 파일이 생길 때까지 (보통 0.5초 안)
+    for _ in range(150):                   # 가상 보드(PTY)와 상태 파일이 생길 때까지 (물리 시뮬레이션이면 몇 초)
         st = sim_state()
         if st.get("on") and st.get("pid") == pid and st.get("ports"):
             break
@@ -2094,16 +2109,21 @@ def sim_card_html():
                      for k, v in ROBOT_KINDS.items())
     opts_m = "".join(f'<option value="{k}"{" selected" if k == cur_m else ""}>{lb}</option>'
                      for k, lb in (("single", "한팔"), ("bimanual", "양팔")))
+    phys = ('<label title="SO-ARM101 한팔에서 MuJoCo 로 책상·큐브·카메라 화면을 시뮬레이션합니다. 끄면 움직이는 도형만 보이는 단순 가상 장치">'
+            '<input type=checkbox id=simphys checked> 물리 시뮬레이션 (MuJoCo · SO-ARM101 한팔)</label>' if mujoco_ok() else '')
     form = (f'<div class=toolbar style="margin-top:8px"><select id=simrobot>{opts_r}</select>'
-            f'<select id=simmode>{opts_m}</select>'
+            f'<select id=simmode>{opts_m}</select>{phys}'
             '<button class=primary onclick="simStart(this)">가상 장치 켜기</button></div>'
             '<script>async function simStart(btn){btn.disabled=true;btn.textContent=\'켜는 중…\';'
             'const r=await fetch(\'/api/sim/start\',{method:\'POST\',headers:{\'Content-Type\':\'application/json\'},'
-            'body:JSON.stringify({robot:document.getElementById(\'simrobot\').value,mode:document.getElementById(\'simmode\').value})});'
+            'body:JSON.stringify({robot:document.getElementById(\'simrobot\').value,mode:document.getElementById(\'simmode\').value,'
+            'physics:document.getElementById(\'simphys\')?document.getElementById(\'simphys\').checked:false})});'
             'const j=await r.json();if(j.error){alert(j.error);btn.disabled=false;btn.textContent=\'가상 장치 켜기\';return;}'
             'location.href=\'/setup/wizard\';}</script>')
     desc = ('가상 팔(리더·팔로워)과 가상 카메라를 만들어 셋업 → 캘리브레이션 → 수집 → 학습 → 실행을 끝까지 해 봅니다. '
-            '실제 팔 설정은 그대로 보관되고, 끄면 돌아갑니다.')
+            '실제 팔 설정은 그대로 보관되고, 끄면 돌아갑니다.'
+            + (' 물리 시뮬레이션을 켜면 큐브를 집어 초록 칸에 놓는 과제를 자동 시연으로 모으고, 실행 결과를 자동으로 판정합니다.'
+               if mujoco_ok() else ''))
     if not real:
         return (f'<div class="card needcard"><div class=needtxt><b>연결된 팔이 없습니다 — 가상 장치로 해 보기</b>'
                 f'<span class=muted>{desc}</span>{form}</div></div>')
@@ -2135,8 +2155,19 @@ def sim_panel_html():
                       f'<button onclick="simCmd({{cmd:\'t\',board:{i},value:32}});simCmd({{cmd:\'v\',board:{i},value:12}})">'
                       f'{sd}팔로워 정상 값으로</button></span>')
     auto = "리더 자동 움직임: 켜짐" if st.get("auto") else "리더 자동 움직임: 꺼짐"
+    if st.get("physics") == "mujoco":
+        # 물리 시뮬레이션: 리더 자동 시연 · 큐브 다시 놓기 · 과제 판정 (1초마다 갱신)
+        btns += ('<button class=simw onclick="simCmd({cmd:\'demo\'})" title="큐브를 새로 놓고 리더가 큐브를 집어 초록 칸에 놓는 '
+                 '시연을 한 번 합니다 (약 14초). 제어 탭에서 리더 팔로우를 켜 두면 팔로워가 따라 합니다">자동 시연</button>'
+                 '<button class=simw onclick="simCmd({cmd:\'reset\'})">큐브 다시 놓기</button>'
+                 '<span id=simtask class=muted></span>'
+                 '<script>async function simTask(){try{const s=await (await fetch(\'/api/sim\')).json();const t=s.task||{};'
+                 'const e=document.getElementById(\'simtask\');if(!e)return;'
+                 'e.innerHTML=(t.success?\'<b style="color:var(--ok)">과제 성공 — 큐브가 초록 칸에 있음</b>\':\'과제: 큐브를 초록 칸에\')'
+                 '+(t.demo?\' · 시연 중 \'+t.demo+\'초 남음\':\'\');}catch(e){}}simTask();setInterval(simTask,1000);</script>')
     return (f'<div class=simbar id=simbar><b>가상 장치 켜짐</b><span class=muted>{esc(st.get("robot", ""))} · '
-            f'{"양팔" if st.get("mode") == "bimanual" else "한팔"}</span>{btns}'
+            f'{"양팔" if st.get("mode") == "bimanual" else "한팔"}'
+            f'{" · 물리 시뮬레이션" if st.get("physics") == "mujoco" else ""}</span>{btns}'
             f'<button class=simw onclick="simCmd({{cmd:\'a\',on:{"false" if st.get("auto") else "true"}}})" '
             f'title="리더가 계속 천천히 움직입니다 (제어 리더 팔로우·수집 시험용)">{auto}</button>'
             f'<details class=simfault><summary>이상 상황 흉내</summary>{fault}'
@@ -2852,6 +2883,7 @@ th.num{text-align:right}
 .mono{font-family:var(--mono);font-size:13px}
 .badge{display:inline-block;white-space:nowrap;font-family:var(--mono);font-size:11px;letter-spacing:.06em;
   padding:2px 9px;border-radius:20px;border:1px solid transparent}
+#polcheck .badge{white-space:normal;overflow-wrap:anywhere;line-height:1.5;margin-bottom:4px}
 .b-ok{color:var(--ok);border-color:var(--ok);background:rgba(87,185,138,.08)}
 .b-bad{color:var(--bad);border-color:var(--bad);background:rgba(201,96,96,.08)}
 .b-run{color:var(--accent);border-color:var(--accent);background:rgba(93,157,214,.08)}
@@ -2925,7 +2957,7 @@ a.btnlink.primary{background:var(--accent-dim);border-color:var(--accent);color:
 .needcard{display:flex;align-items:center;gap:16px;flex-wrap:wrap;border-color:rgba(217,161,59,.55);
   background:rgba(217,161,59,.06)}
 .needcard .needtxt{flex:1;min-width:220px;display:flex;flex-direction:column;gap:2px}
-.needcard .needtxt b{font-size:15px}
+.needcard .needtxt>b{font-size:15px}
 
 /* ---- 반응형 (태블릿/모바일) ---- */
 @media(max-width:820px){
@@ -3691,11 +3723,14 @@ def collect_page(resume: str = ""):
       <label class=f id=f_resume style="display:none">이어서 수집할 데이터셋
         <select id=resume_ds>{resume_opts}</select></label>
       <label class=f>목표 에피소드 수 <input id=neps value=50 size=5></label>
-      <label class=f>에피소드 최대(초) <input id=ept value=30 size=5></label>
+      <label class=f>에피소드 최대(초) <input id=ept value={16 if sim_physics() else 30} size=5></label>
       <label class=f style="flex:1;min-width:260px">태스크 설명
         <input id=task value="{esc(task0)}"></label>
       <button class=primary id=bstart onclick="startRec(this)" {'' if ports_configured() and not busy else 'disabled'}>수집 시작</button>
     </div>
+    {'<p><label><input type=checkbox id=simauto checked> <b>가상 시연으로 자동 녹화</b> — 에피소드마다 큐브를 새로 놓고 '
+     '리더가 큐브를 집어 초록 칸에 놓는 시연(약 14초)을 하며, 목표 에피소드 수만큼 저절로 이어서 녹화합니다</label></p>'
+     if sim_physics() else ''}
     <p class=muted><b>자동으로 녹화되지 않습니다.</b> 시작하면 <b>대기</b> 상태로 들어가고,
     그 화면에서 <b>녹화 시작</b>을 눌러야 그때부터 기록됩니다. 한 에피소드를 끝낼 때마다 다시 대기로 돌아옵니다.<br>
     목표 에피소드 수는 진행률 표시용입니다 — 도달해도 멈추지 않으니 <b>수집 끝내기</b>로 마치세요.
@@ -3727,6 +3762,7 @@ def collect_page(resume: str = ""):
         resume_ds:document.getElementById('resume_ds')?.value||'',
         num_episodes:document.getElementById('neps').value,
         episode_time_s:document.getElementById('ept').value,
+        sim_auto:!!document.getElementById('simauto')?.checked,
         task:document.getElementById('task').value}};
       const r=await fetch('/api/record',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(b)}});
       const d=await r.json(); if(d.error)alert(d.error); else {{ if(d.warn&&d.warn.length) alert('전원 점검 — 확인하세요\\n\\n'+d.warn.join('\\n')); location.reload(); }}
@@ -3865,7 +3901,8 @@ async def api_record(req: Request):
             "task": task, "num_episodes": neps, "episode_time_s": ept,
             "repo_id": f"local/{name}", "root": str(DATA_ROOT / name), "resume": resume,
             "streaming_encoding": bool(CFG.get("streaming_encoding", False)),
-            "max_relative_target": mrt_value(CFG.get("max_relative_target"))}
+            "max_relative_target": mrt_value(CFG.get("max_relative_target")),
+            "sim_auto": bool(b.get("sim_auto")) and sim_physics() is not None}
     try:
         jid = start_job("record", [sys.executable, str(Path(__file__).resolve()), "--worker", "record", "{jid}"],
                         spec=spec)
@@ -5338,6 +5375,35 @@ def api_rollout_check(ckpt: str = ""):
             "policy": load_json(ck / "config.json", {}).get("type", "?")}
 
 
+def sim_judge(j, jid, rel, mine, alive):
+    """물리 시뮬레이션 실행이면 과제 성공을 자동으로 기록합니다 — 성공하면 기록하고 실행을 끝내고,
+    성공 없이 끝나면 실패로 기록. 사람이 이미 기록했으면 건드리지 않습니다."""
+    spec = j.get("spec") or {}
+    if not spec.get("sim_task"):
+        return {}
+    task = (sim_state().get("task") or {})
+    fresh = int(task.get("resets", 0)) > int(spec.get("sim_resets0", 0))
+    ok = bool(task.get("success")) and fresh
+    out = {"success": ok, "fresh": fresh}
+    if mine or not rel:
+        return out
+    result = "success" if (ok and alive) else ("fail" if not alive else "")
+    if not result:
+        return out
+    with META_LOCK:
+        trials = load_trials()
+        lst = trials.setdefault(rel, [])
+        if any(x.get("job") == jid for x in lst):
+            return out
+        lst.append({"t": time.strftime("%F %T"), "result": result, "job": jid, "auto": "sim",
+                    "engine": rollout_engine_label(j), "env": env_name()})
+        save_json(TRIALS_FILE, trials)
+    if result == "success":
+        kill_job(jid)                     # 성공했으면 시작 자세로 돌아가며 끝냄 (중지 버튼과 같은 경로)
+    out["recorded"] = result
+    return out
+
+
 @app.get("/api/rollout/status/{jid}")
 def api_rollout_status(jid: str):
     if not safe_name(jid):
@@ -5354,7 +5420,11 @@ def api_rollout_status(jid: str):
         st["phase"] = "ended"           # 강제 종료 등으로 마지막 상태를 못 쓴 경우
     tail = log_tail(jid)
     hint = failure_hint(tail) if (not alive and st.get("phase") in ("error", "ended")) or st.get("phase") == "error" else ""
-    return {"alive": alive, "status": st, "tail": tail, "ckpt": rel, "hint": hint,
+    simj = sim_judge(j, jid, rel, mine, alive)
+    if simj.get("recorded"):
+        trials = load_trials()
+        mine = [x for x in trials.get(rel, []) if x.get("job") == jid]
+    return {"alive": alive, "status": st, "tail": tail, "ckpt": rel, "hint": hint, "sim": simj,
             "engine": rollout_engine_label(j), "started": j.get("started"),
             "trials": {"run": {"n": len(mine), "ok": sum(1 for x in mine if x["result"] == "success")},
                        "ckpt": trial_summary(rel, trials)}}
@@ -5431,6 +5501,7 @@ ROLLOUT_RUN_BODY = """
       <div class=trial><button class=ok-btn onclick="trial('success')">성공 (S)</button>
         <button class=ng-btn onclick="trial('fail')">실패 (F)</button></div>
       <div class=kv><span>이번 실행</span><b id=trun>0 / 0</b><span>이 체크포인트 누적</span><b id=tck>-</b></div>
+      <p id=simres class=badge style="display:none;margin:8px 0 0"></p>
       <p class=muted style="margin:8px 0 0">물체를 놓고 한 번 시도할 때마다 결과를 누르세요. 체크포인트별 실기 성공률로 모델을 비교합니다.
         <a href="#" onclick="trial('undo');return false">마지막 기록 취소 (U)</a></p>
     </div>
@@ -5539,6 +5610,12 @@ async function refresh(){
   const tr=d.trials||{}, run=tr.run||{n:0,ok:0}, ck=tr.ckpt||{};
   $('trun').textContent=run.ok+' 성공 / '+run.n+' 시도';
   $('tck').textContent=ck.n?(ck.ok+' / '+ck.n+' ('+ck.rate+'%)'):'기록 없음';
+  const sj=d.sim||{};
+  if(sj.fresh!==undefined){
+    $('simres').style.display='';
+    $('simres').className='badge '+(sj.success?'b-ok':(d.alive?'b-run':'b-bad'));
+    $('simres').textContent=sj.success?'가상 과제 판정: 성공 — 자동 기록':(d.alive?'가상 과제 판정: 진행 중 — 큐브가 초록 칸에 놓이면 성공':'가상 과제 판정: 실패 — 자동 기록');
+  }
   $('tail').textContent=(st.err?'!! '+st.err+'\\n\\n':'')+(d.tail||'');
   $('hint').style.display=d.hint?'':'none'; $('hint').textContent=d.hint?'원인 추정: '+d.hint:'';
   if(d.hint) document.querySelector('details').open=true;
@@ -5737,8 +5814,14 @@ async def api_rollout(req: Request):
     pbad, pwarn = await asyncio.to_thread(power_preflight, ("follower",))
     if pbad:
         return JSONResponse({"error": "전원 점검 실패 — 시작하지 않았습니다\n\n" + "\n".join(pbad + pwarn)}, status_code=400)
+    sim = sim_physics()
+    spec = None
+    if sim:
+        # 물리 시뮬레이션: 큐브를 새로 놓고, 그 뒤의 '과제 성공' 만 이 실행의 결과로 셉니다
+        spec = {"sim_task": True, "sim_resets0": int((sim.get("task") or {}).get("resets", 0))}
+        sim_send("reset")
     try:
-        jid = start_job("rollout", argv)
+        jid = start_job("rollout", argv, spec=spec)
     except JobStartError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "job": jid, "warn": pwarn}
@@ -7137,7 +7220,7 @@ async def api_sim_start(request: Request):
     robot = b.get("robot") or CFG.get("robot") or "so101"
     mode = b.get("mode") or CFG.get("mode") or "single"
     try:
-        return sim_start(robot, mode)
+        return sim_start(robot, mode, physics=b.get("physics", True) is not False)
     except (ValueError, RuntimeError, JobStartError) as e:
         return JSONResponse({"error": str(e)}, status_code=400)
 
@@ -7160,6 +7243,10 @@ async def api_sim_cmd(request: Request):
     nb = len(st.get("ports", []))
     if cmd == "a":
         sim_send("a on" if b.get("on") else "a off")
+    elif cmd in ("demo", "reset"):
+        if st.get("physics") != "mujoco":
+            return JSONResponse({"error": "물리 시뮬레이션 가상 장치에서만 됩니다"}, status_code=400)
+        sim_send("demo new" if cmd == "demo" else "reset")
     elif cmd in ("w", "v", "t") and isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= nb:
         if cmd == "w":
             sim_send(f"w {n}")
@@ -10027,6 +10114,8 @@ def worker_record(jid):
             dataset=None 이면 record_loop 은 add_frame 을 건너뜁니다."""
             ui["start"] = False
             events["rerecord_episode"] = False    # 대기 중에 누른 '버리고 다시' 가 다음 에피소드를 버리지 않게
+            if sim_auto:
+                sim_send("reset")                 # 녹화 전에 큐브를 새로 놓아 첫 프레임부터 새 장면
             put(phase="ready", t0=None, phase_len=0, episode=dataset.num_episodes, last=last)
             while not ui["start"] and not events["stop_recording"]:
                 record_loop(robot=robot, events=events, fps=fps,
@@ -10034,17 +10123,24 @@ def worker_record(jid):
                             robot_observation_processor=rop, teleop=teleop,
                             control_time_s=READY_CHUNK_S, single_task=task)
                 put()
+                if sim_auto:
+                    ui["start"] = True            # 가상 시연 자동 녹화 — 한 번 쉬고(큐브를 새로 놓은 뒤) 바로 다음 에피소드
             events["exit_early"] = False
             events["rerecord_episode"] = False
             ui["start"] = False
 
+        sim_auto = bool(spec.get("sim_auto"))
         with VideoEncodingManager(dataset):
             recorded = 0
             last = ""
             while not events["stop_recording"]:
+                if sim_auto and recorded >= int(spec.get("num_episodes") or 0):
+                    break                        # 자동 녹화는 목표 에피소드 수에서 끝냅니다
                 idle(last)                       # 사람이 '녹화 시작' 을 누를 때까지 기다립니다
                 if events["stop_recording"]:
                     break
+                if sim_auto:
+                    sim_send("demo")             # 리더가 지금 큐브 위치로 시연 — 이 에피소드에 그대로 녹화
                 put(phase="record", episode=dataset.num_episodes, recorded=recorded,
                     t0=time.time(), phase_len=ept, last="")
                 logging.info(f"Recording episode {dataset.num_episodes}")

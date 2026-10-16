@@ -22,6 +22,11 @@
         l                 보드 목록
         q                 끝내기
   - 가상 카메라도 함께 만듭니다 (openmimic_sim/cam_<이름>). 영상은 openmimic_simcam 이 합성합니다.
+  - 물리 시뮬레이션 (--physics mujoco, SO-ARM101 한팔에서 mujoco 가 있으면 기본):
+    팔로워가 MuJoCo 안의 SO-101 이 되고, 카메라(top · wrist)가 책상·큐브·목표 칸을 렌더링합니다 (openmimic_mujoco).
+        demo     리더가 '큐브 집어 초록 칸에 놓기' 시연을 한 번 (약 14초) — 지금 큐브 위치에서
+        demo new 큐브를 새 위치에 놓고 시연
+        reset    큐브만 새 위치에 다시 놓기
   - 모터 ID 세팅(보드레이트·ID 변경)은 흉내내지 않습니다.
 
 포트 경로는 레포 안의 openmimic_sim/<이름> 심볼릭 링크로 고정됩니다 — 껐다 켜도 같은 경로라 다시 지정할 필요가 없습니다.
@@ -40,6 +45,8 @@ import threading
 import time
 import tty
 from pathlib import Path
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parent
 SIM_DIR = ROOT / "openmimic_sim"
@@ -321,6 +328,9 @@ class SimArm:
         self.wiggle_until = 0.0
         self.wiggle_t0 = 0.0
         self.lock = threading.Lock()
+        self.world = None                     # 물리 시뮬레이션이면 팔로워의 몸 (openmimic_mujoco.World)
+        self.ranges = None                    # (lo, hi) 틱 — 쓸기 범위. 없으면 2048 ± 900
+        self.demo = None                      # (경유점, 시작 시각) — 리더 자동 시연
         threading.Thread(target=self._io, daemon=True).start()
 
     def _io(self):
@@ -336,18 +346,49 @@ class SimArm:
                     for rep in self.board.handle(pkt):
                         os.write(self.master, rep)
 
+    def _wig(self, k, ph):
+        if self.ranges is None:
+            return 2048 + 900 * math.sin(2 * math.pi * ph)
+        lo, hi = self.ranges[0][k], self.ranges[1][k]
+        return (lo + hi) / 2 + (hi - lo) / 2 * math.sin(2 * math.pi * ph)
+
     def tick(self, now, dt, auto):
         with self.lock:
             servos = list(self.board.servos.values())
+            wig = now < self.wiggle_until
+            ph = (now - self.wiggle_t0) / max(1e-6, self.wiggle_until - self.wiggle_t0)
+            if self.world is not None:
+                # 물리: 토크가 모두 꺼져 있으면 '손으로' 움직인 것처럼 관절을 놓고, 아니면 목표를 액추에이터로
+                torque = [bool(s.mem[40]) for s in servos]
+                if wig and not any(torque):
+                    self.world.teleport([self._wig(k, ph) for k in range(len(servos))])
+                self.world.set_targets([s.goal_actual for s in servos], torque)
+                return
+            demo_q = None
+            if self.demo is not None:
+                pts, t0 = self.demo
+                if now - t0 > pts[-1][0]:
+                    self.demo = None
+                import openmimic_mujoco as om
+                demo_q = om.tick_from_rad(om.interp(pts, now - t0), self.robot)
             for k, s in enumerate(servos):
                 torque = s.mem[40] if isinstance(s, FeetechServo) else s.mem[64]
                 if not torque:
-                    if now < self.wiggle_until:            # '손으로' 양 끝까지 쓸기
-                        ph = (now - self.wiggle_t0) / (self.wiggle_until - self.wiggle_t0)
-                        s.actual = 2048 + 900 * math.sin(2 * math.pi * ph)
+                    if wig:                                # '손으로' 양 끝까지 쓸기
+                        s.actual = self._wig(k, ph)
+                    elif demo_q is not None:
+                        s.actual = float(demo_q[k])
                     elif auto and self.role == "leader" and k < 5:
                         s.actual = 2048 + 350 * math.sin(now * 0.6 + k)
                 s.tick(dt)
+
+    def sync_from_world(self):
+        """물리 한 스텝 뒤 팔로워 서보의 실제 위치(엔코더)를 MuJoCo 관절각에서 읽어 둡니다."""
+        ticks = self.world.joint_ticks()
+        with self.lock:
+            for k, s in enumerate(self.board.servos.values()):
+                s.actual = float(ticks[k])
+                s.sync_present()
 
     def wiggle(self, sec=4.0):
         self.wiggle_t0 = time.monotonic()
@@ -373,7 +414,22 @@ def main(argv=None):
     ap.add_argument("--robot", choices=("so101", "omx"), default="so101")
     ap.add_argument("--mode", choices=("single", "bimanual"), default="single")
     ap.add_argument("--auto", action="store_true", help="시작부터 리더를 계속 움직임")
+    ap.add_argument("--physics", choices=("auto", "mujoco", "none"), default="auto",
+                    help="auto = SO-ARM101 한팔이고 mujoco 가 있으면 물리 시뮬레이션")
+    ap.add_argument("--cam", default="320x240", help="가상 카메라 해상도 (물리 시뮬레이션 렌더)")
     a = ap.parse_args(argv)
+    world = None
+    stale = Path("/dev/shm/openmimic_sim")
+    for f in (stale.glob("cam_*.rgb") if stale.is_dir() else []):
+        f.unlink()                       # 전에 죽은 물리 시뮬레이션이 남긴 렌더 프레임 — 남아 있으면 가상 카메라가 옛 화면을 보여 줌
+    if a.physics != "none" and a.robot == "so101" and a.mode == "single":
+        import openmimic_mujoco as om
+        if om.available(a.robot):
+            cw, ch = (int(v) for v in a.cam.lower().split("x"))
+            world = om.World(robot=a.robot, cam_size=(cw, ch))
+            print(f"물리 시뮬레이션: MuJoCo (렌더 {os.environ.get('MUJOCO_GL')} · {os.environ.get('OPENMIMIC_GL_INFO', '')})", flush=True)
+        elif a.physics == "mujoco":
+            sys.exit("mujoco 가 없습니다 — pip install mujoco")
 
     sides = ["main"] if a.mode == "single" else ["left", "right"]
     SIM_DIR.mkdir(exist_ok=True)
@@ -383,6 +439,13 @@ def main(argv=None):
     arms = [SimArm(a.robot, s, r) for s in sides for r in ("follower", "leader")]
     for arm in arms:
         os.symlink(arm.dev, arm.link)
+    if world is not None:
+        rng = world.ranges_ticks(margin=0.005)       # 리더·팔로워 쓸기 범위를 같게 → 캘리브레이션 범위가 같아짐
+        for arm in arms:
+            arm.ranges = rng
+            if arm.role == "follower":
+                arm.world = world
+                arm.sync_from_world()
     # 가상 카메라 — 경로 표시용 빈 파일. 영상은 이 경로를 연 쪽에서 openmimic_simcam 이 합성합니다
     cam_names = ["top", "wrist"] if a.mode == "single" else ["top", "left_wrist", "right_wrist"]
     cams = []
@@ -401,8 +464,17 @@ def main(argv=None):
                        "label": f"가상 {label} {arm.side} {'팔로워' if arm.role == 'follower' else '리더'}",
                        "volt": state["volt"].get(arm.name), "temp": state["temp"].get(arm.name)}
                       for arm in arms],
-            "cams": cams}, ensure_ascii=False, indent=1))
+            "cams": cams, "physics": "mujoco" if world is not None else "",
+            "task": dict(world.state(), demo=demo_left()) if world is not None else None},
+            ensure_ascii=False, indent=1))
         os.replace(tmp, SIM_FILE)
+
+    def demo_left():
+        ld = next((x for x in arms if x.role == "leader"), None)
+        if ld is None or ld.demo is None:
+            return 0
+        pts, t0 = ld.demo
+        return round(max(0.0, pts[-1][0] - (time.monotonic() - t0)), 1)
 
     write_state()
 
@@ -421,6 +493,8 @@ def main(argv=None):
                 os.unlink(c["path"])
             except OSError:
                 pass
+        if world is not None:
+            world.close()
         os._exit(0)
 
     signal.signal(signal.SIGINT, cleanup)
@@ -432,10 +506,38 @@ def main(argv=None):
             now = time.monotonic()
             for arm in arms:
                 arm.tick(now, now - last, state["auto"])
+            if world is not None:
+                world.step(now - last)
+                for arm in arms:
+                    if arm.world is not None:
+                        arm.sync_from_world()
             last = now
             time.sleep(0.01)
 
     threading.Thread(target=loop, daemon=True).start()
+
+    if world is not None:
+        def render_loop():
+            # 카메라 렌더 — GPU(EGL)면 30 fps 를 넉넉히, CPU(OSMesa)면 가능한 만큼. 카메라는 마지막 장면을 읽습니다
+            while True:
+                t0 = time.monotonic()
+                try:
+                    world.render_all()
+                except Exception as e:      # noqa: BLE001 — 렌더 실패가 팔 흉내를 멈추면 안 됩니다
+                    print("렌더 실패:", e, flush=True)
+                    time.sleep(2)
+                time.sleep(max(0.0, 1 / 30 - (time.monotonic() - t0)))
+
+        def state_loop():
+            while True:
+                time.sleep(0.5)
+                try:
+                    write_state()
+                except OSError:
+                    pass
+
+        threading.Thread(target=render_loop, daemon=True).start()
+        threading.Thread(target=state_loop, daemon=True).start()
 
     def show():
         print(f"\n가상 {label} {'양팔' if a.mode == 'bimanual' else '한팔'} — OpenMimic 포트 목록에 '가상 …' 으로 나타납니다")
@@ -457,6 +559,21 @@ def main(argv=None):
         elif cmd[0] == "a":
             state["auto"] = (cmd[1] == "on") if len(cmd) > 1 and cmd[1] in ("on", "off") else not state["auto"]
             print("리더 자동 움직임:", "켜짐" if state["auto"] else "꺼짐", flush=True)
+        elif cmd[0] in ("demo", "reset"):
+            if world is None:
+                print("물리 시뮬레이션이 아닙니다 (--physics mujoco)", flush=True)
+                return
+            if cmd[0] == "reset" or (len(cmd) > 1 and cmd[1] == "new"):
+                world.reset_scene()
+            if cmd[0] == "demo":
+                import openmimic_mujoco as om
+                ld = next(x for x in arms if x.role == "leader")
+                with ld.lock:
+                    start = om.rad_from_tick(np.array([s.actual for s in ld.board.servos.values()], float), a.robot)
+                ld.demo = (world.plan_demo(start_q=start), time.monotonic())
+                print("자동 시연 시작 (약 14초)", flush=True)
+            else:
+                print("큐브를 새 위치에 놓았습니다", flush=True)
         elif cmd[0] == "w" and len(cmd) > 1 and board(cmd[1]):
             board(cmd[1]).wiggle()
             print(f"{board(cmd[1]).name} 쓰는 중 (4초)", flush=True)
