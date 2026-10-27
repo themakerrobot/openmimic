@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """ROBOTIS OMX 팔 한 개(보드 1개 = 포트 1개)의 불량 여부 점검 — Dynamixel(Protocol 2.0) 판.
 
-    python tools_dxlcheck.py --port /dev/serial/by-id/usb-... --role follower
+    python tools_dxlcheck.py --port /dev/serial/by-id/usb-... --role follower      (Windows: --port COM5)
     python tools_dxlcheck.py --port ... --role leader --json
 
 OpenMimic 의 Setup 탭 '팔 불량 점검'·셋업 마법사 '진단' 이 OMX 일 때 이 모듈을 씁니다.
@@ -30,6 +30,7 @@ import statistics
 import sys
 import time
 
+import openmimic_platform as P
 import tools_armcheck as AC
 from tools_armcheck import FAIL, INFO, NOISE_FAIL, NOISE_WARN, TEMP_REL_WARN, TEMP_WARN_C, WARN, JOINTS
 
@@ -67,7 +68,7 @@ class BusIO:
         self.models = {n: spec[n][1] for n in JOINTS}
         self._get_address = get_address
         self.bus = DynamixelMotorsBus(
-            port, {n: Motor(i, m, MotorNormMode.RANGE_M100_100) for n, (i, m) in spec.items()})
+            P.resolve_serial_port(port), {n: Motor(i, m, MotorNormMode.RANGE_M100_100) for n, (i, m) in spec.items()})
         self.bus.connect(handshake=False)
         self.model_numbers = {n: self.bus.model_number_table[m] for n, m in self.models.items()}
 

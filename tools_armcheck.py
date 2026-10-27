@@ -2,7 +2,7 @@
 """SO-101 팔 한 개(서보 드라이버 보드 1개 = 포트 1개)의 불량 여부 점검.
 
     python tools_armcheck.py                                  # 포트가 하나면 자동 선택
-    python tools_armcheck.py --port /dev/serial/by-id/usb-... --role follower
+    python tools_armcheck.py --port /dev/serial/by-id/usb-... --role follower      (Windows: --port COM5)
     python tools_armcheck.py --port ... --role leader --sweep # + 손으로 관절 쓸기 (엔코더)
     python tools_armcheck.py --port ... --json                # 결과를 JSON 으로
 
@@ -37,13 +37,12 @@ EEPROM 은 어떤 경우에도 쓰지 않습니다.
 from __future__ import annotations
 
 import argparse
-import glob
 import json
-import os
-import select
 import statistics
 import sys
 import time
+
+import openmimic_platform as P
 
 JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 IDS = {n: i for i, n in enumerate(JOINTS, 1)}
@@ -99,7 +98,7 @@ class BusIO:
 
         self._get_address = get_address
         self.bus = FeetechMotorsBus(
-            port, {n: Motor(IDS[n], "sts3215", MotorNormMode.DEGREES) for n in JOINTS})
+            P.resolve_serial_port(port), {n: Motor(IDS[n], "sts3215", MotorNormMode.DEGREES) for n in JOINTS})
         self.bus.connect(handshake=False)
 
     def close(self):
@@ -360,11 +359,7 @@ def torque_off(io, joints):
 
 
 def _stdin_enter():
-    r, _, _ = select.select([sys.stdin], [], [], 0)
-    if r:
-        sys.stdin.readline()
-        return True
-    return False
+    return P.stdin_line_ready()
 
 
 def check_sweep(io, rep, present, *, min_deg=SWEEP_MIN_DEG, jump_ticks=JUMP_TICKS, max_s=25.0,
@@ -429,8 +424,10 @@ def print_report(rep, port):
 
 
 def list_ports():
-    by_id = sorted(glob.glob("/dev/serial/by-id/*"))
-    return by_id or sorted(glob.glob("/dev/ttyACM*") + glob.glob("/dev/ttyUSB*"))
+    """USB 시리얼 포트 — 보드 시리얼 번호 기반 이름(by-id)이 있으면 그것들, 없으면 장치 이름."""
+    ports = P.list_serial_ports()
+    by_id = sorted(e["by_id"] for e in ports if e["by_id"])
+    return by_id or sorted(e["dev"] for e in ports)
 
 
 def main(argv=None):
@@ -451,7 +448,7 @@ def main(argv=None):
             print("포트를 지정하세요 (--port). 보이는 포트:\n  " + ("\n  ".join(ports) or "(없음)"), file=sys.stderr)
             return 3
         port = ports[0]
-    if not os.path.exists(port):
+    if not (P.port_exists(port) or P.is_sim_port(port)):
         print(f"포트가 없습니다: {port}", file=sys.stderr)
         return 3
     try:

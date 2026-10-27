@@ -24,7 +24,6 @@ import os
 import re
 import secrets
 import shutil
-import signal
 import subprocess
 import sys
 import tarfile
@@ -47,6 +46,7 @@ from fastapi.responses import (
 
 import openmimic_health  # 시작 전 전원 점검 · 실행 중 서보 온도/전압 감시
 import openmimic_ov  # OpenVINO 변환·롤아웃. openvino 자체는 필요할 때 별도 프로세스에서만 import 합니다
+import openmimic_platform as P  # Linux/Windows 차이 (포트·카메라·작업 프로세스·공유 폴더)
 import openmimic_simcam  # 가상 카메라 (openmimic_sim/cam_<이름>) — 실제 카메라 경로는 그대로
 
 openmimic_simcam.install()
@@ -128,7 +128,7 @@ PREVIEW_FPS = 10          # record worker 가 미리보기 JPEG 을 갱신하는
 READY_CHUNK_S = 2.0       # 수집 대기 중 record_loop 을 끊어 도는 단위 (이 틈에 온도를 읽습니다)
 NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 # record worker ↔ 웹 사이의 상태/미리보기/명령 파일. 초당 수십 회 쓰므로 tmpfs 를 우선합니다.
-RUN_DIR = Path("/dev/shm/openmimic") if Path("/dev/shm").is_dir() else PROJ / "openmimic_run"
+RUN_DIR = P.shm_dir("openmimic", PROJ / "openmimic_run")
 
 # ------------------------------- 설정 ---------------------------------------
 # arms 는 처음부터 리스트입니다. 한팔이면 원소 1개(side="main"),
@@ -930,12 +930,13 @@ def _cam_cli(specs):
     """draccus 가 파싱하는 카메라 dict 리터럴 (셸을 안 거치므로 따옴표 없음)."""
     items = []
     for name, s in specs.items():
-        idx = s["index_or_path"]
+        idx, backend = P.resolve_camera(s["index_or_path"])
         idx = idx if isinstance(idx, int) else str(idx)
         fc = cam_fourcc(s)
         items.append(f"{name}: {{type: opencv, index_or_path: {idx}, "
                      f"width: {int(s['width'])}, height: {int(s['height'])}, fps: {int(s['fps'])}"
-                     + (f", fourcc: {fc}" if fc else "") + "}")
+                     + (f", fourcc: {fc}" if fc else "") + (f", backend: {backend}" if backend is not None else "")
+                     + "}")
     return "{" + ", ".join(items) + "}"
 
 
@@ -1044,7 +1045,7 @@ def make_arm(role, arm_cfg=None, *, k=None, port=None, cameras=None, mrt=None):
     cls, cfg_cls = _load(mod, cls_name), _load(mod, cfg_name)
     arm_cfg = arm_cfg or {}
     kw = {"id": arm_cfg.get(f"{role}_id") or role,
-          "port": port if port is not None else (arm_cfg.get(f"{role}_port") or "")}
+          "port": P.resolve_serial_port(port if port is not None else (arm_cfg.get(f"{role}_port") or ""))}
     if role == "follower":
         kw.update(use_degrees=k["use_degrees"], max_relative_target=mrt,
                   cameras=cameras if cameras is not None else {})
@@ -1061,12 +1062,12 @@ def make_bi(role, arm_cfgs, *, k=None, cameras=None, mrt=None, arm_cameras=None)
     L, R = arm_cfgs["left"], arm_cfgs["right"]
     if role == "follower":
         arm_cls = _load(*k["arm_cfg"])
-        mk = lambda a: arm_cls(port=a["follower_port"], max_relative_target=mrt,
+        mk = lambda a: arm_cls(port=P.resolve_serial_port(a["follower_port"]), max_relative_target=mrt,
                                use_degrees=k["use_degrees"], cameras=_cam_configs(a["cameras"]))
         return cls(cfg_cls(id=bimanual_base_id("follower", arm_cfgs), left_arm_config=mk(L),
                            right_arm_config=mk(R), cameras=cameras if cameras is not None else {}))
     arm_cls = _load(*k["leader_arm_cfg"])
-    mk = lambda a: arm_cls(port=a["leader_port"])
+    mk = lambda a: arm_cls(port=P.resolve_serial_port(a["leader_port"]))
     return cls(cfg_cls(id=bimanual_base_id("leader", arm_cfgs), left_arm_config=mk(L), right_arm_config=mk(R)))
 
 
@@ -1146,9 +1147,9 @@ def robot_cli_args():
         L, R = ARM_CFGS["left"], ARM_CFGS["right"]
         args = [f"--robot.type={k['cli']['bi_follower']}",
                 f"--robot.id={bimanual_base_id('follower')}",
-                f"--robot.left_arm_config.port={L['follower_port']}",
+                f"--robot.left_arm_config.port={P.resolve_serial_port(L['follower_port'])}",
                 f"--robot.left_arm_config.cameras={_cam_cli(L['cameras'])}",
-                f"--robot.right_arm_config.port={R['follower_port']}",
+                f"--robot.right_arm_config.port={P.resolve_serial_port(R['follower_port'])}",
                 f"--robot.right_arm_config.cameras={_cam_cli(R['cameras'])}",
                 f"--robot.cameras={_cam_cli(CFG['cameras'])}"]
         if mrt is not None:
@@ -1159,7 +1160,7 @@ def robot_cli_args():
     cams = dict(arm["cameras"])
     cams.update(CFG["cameras"])
     args = [f"--robot.type={k['cli']['follower']}",
-            f"--robot.port={arm['follower_port']}",
+            f"--robot.port={P.resolve_serial_port(arm['follower_port'])}",
             f"--robot.id={arm['follower_id']}",
             f"--robot.cameras={_cam_cli(cams)}"]
     if mrt is not None:
@@ -1174,45 +1175,22 @@ def teleop_cli_args():
         L, R = ARM_CFGS["left"], ARM_CFGS["right"]
         return [f"--teleop.type={k['cli']['bi_leader']}",
                 f"--teleop.id={bimanual_base_id('leader')}",
-                f"--teleop.left_arm_config.port={L['leader_port']}",
-                f"--teleop.right_arm_config.port={R['leader_port']}"]
+                f"--teleop.left_arm_config.port={P.resolve_serial_port(L['leader_port'])}",
+                f"--teleop.right_arm_config.port={P.resolve_serial_port(R['leader_port'])}"]
     arm = ARM_CFGS[SIDES[0]]
     return [f"--teleop.type={k['cli']['leader']}",
-            f"--teleop.port={arm['leader_port']}",
+            f"--teleop.port={P.resolve_serial_port(arm['leader_port'])}",
             f"--teleop.id={arm['leader_id']}"]
 
 
 # ----------------------------- 작업(job) 관리 --------------------------------
 def pid_alive(pid):
-    if not pid:
-        return False
-    try:
-        done, _ = os.waitpid(pid, os.WNOHANG)
-        if done == pid:
-            return False
-    except ChildProcessError:
-        pass
-    except OSError:
-        return False
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    try:
-        state = Path(f"/proc/{pid}/stat").read_text().split(")")[-1].split()[0]
-        if state == "Z":
-            return False
-    except Exception:
-        pass
-    return True
+    return P.job_alive(pid)
 
 
 def _proc_start(pid):
-    """/proc/<pid>/stat 의 starttime(22번째 필드). PID 가 재사용됐는지 가리는 데 씁니다."""
-    try:
-        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
-    except Exception:
-        return None
+    """프로세스 시작 시각 표식. PID 가 재사용됐는지 가리는 데 씁니다."""
+    return P.proc_start_time(pid)
 
 
 def job_alive(j):
@@ -1302,9 +1280,7 @@ def start_job(kind, argv, cwd=None, spec=None):
                "log": str(log), "started": time.strftime("%F %T"), "spec": spec})
     lf = open(log, "w")
     try:
-        p = subprocess.Popen(argv, cwd=cwd or str(HOME), stdin=subprocess.DEVNULL,
-                             stdout=lf, stderr=subprocess.STDOUT,
-                             env=child_env(), start_new_session=True)
+        p = P.spawn_job(argv, env=child_env(), stdout=lf, cwd=cwd or str(HOME))
     finally:
         lf.close()      # 자식이 dup 를 들고 있으므로 부모 쪽은 닫습니다 (fd 누수 방지)
     j = load_json(JOB_DIR / f"{jid}.json", {})
@@ -1336,18 +1312,17 @@ def record_status(jid):
 
 
 def kill_job(jid, force=False):
-    """force=False: 1 번째 SIGINT(정상 종료 요청), 2 번째부터 SIGKILL.
-    force=True : 곧바로 SIGKILL. 프로세스 그룹 전체에 보냅니다
-    (start_job 이 os.setsid 로 새 세션을 열어 두므로 OpenMimic 자신은 안 맞습니다)."""
+    """force=False: 1 번째 정상 종료 요청(Linux SIGINT · Windows CTRL_BREAK), 2 번째부터 강제 종료.
+    force=True : 곧바로 강제 종료. 프로세스 그룹 전체에 보냅니다
+    (start_job 이 새 세션·프로세스 그룹으로 띄워 두므로 OpenMimic 자신은 안 맞습니다)."""
     if not safe_name(jid):
         return False
     jf = JOB_DIR / f"{jid}.json"
     j = load_json(jf, {})
     if not j.get("pid") or not job_alive(j):
         return False
-    sig = signal.SIGKILL if (force or j.get("kill_requested")) else signal.SIGINT
     try:
-        os.killpg(os.getpgid(j["pid"]), sig)
+        P.stop_job(j["pid"], force=bool(force or j.get("kill_requested")))
     except OSError:
         return False
     j["kill_requested"] = True
@@ -1827,11 +1802,11 @@ class CamStreamer:
         self.cams = {}
         self.errors = {}
         for name, spec in CAM_SPECS.items():
-            idx = spec["index_or_path"]
-            idx = idx if isinstance(idx, int) else Path(str(idx))
             try:
+                idx, backend = P.resolve_camera(spec["index_or_path"])
+                idx = idx if isinstance(idx, int) else Path(str(idx))
                 cam = OpenCVCamera(OpenCVCameraConfig(
-                    index_or_path=idx, fps=int(spec["fps"]),
+                    index_or_path=idx, fps=int(spec["fps"]), **cam_backend_kw(backend),
                     width=int(spec["width"]), height=int(spec["height"]),
                     color_mode="bgr",   # imencode 가 BGR 을 기대 — 변환 한 번 아낍니다
                     **cam_fourcc_kw(spec),
@@ -1889,65 +1864,25 @@ def any_arm_connected():
 
 
 # ----------------------------- 포트 / 카메라 탐색 (셋업 탭) -------------------
-def _read_sysfs(p):
-    try:
-        return p.read_text().strip()
-    except Exception:
-        return ""
-
-
-def usb_info(dev, cls="tty"):
-    """/dev/ttyACM0 (cls=tty) 또는 /dev/video0 (cls=video4linux) → 그 뒤의 USB 장치 정보.
-    sysfs 를 부모 방향으로 거슬러 올라가 idVendor 가 있는 노드를 찾습니다."""
-    node = Path("/sys/class") / cls / os.path.basename(dev) / "device"
-    if not node.exists():
-        return {}
-    p = node.resolve()
-    for _ in range(8):
-        if (p / "idVendor").exists():
-            return {"vid": _read_sysfs(p / "idVendor"),
-                    "pid": _read_sysfs(p / "idProduct"),
-                    "manufacturer": _read_sysfs(p / "manufacturer"),
-                    "product": _read_sysfs(p / "product"),
-                    "serial": _read_sysfs(p / "serial")}
-        if p.parent == p:
-            break
-        p = p.parent
-    return {}
-
-
-def _alias_map(dirname):
-    """/dev/serial/by-id 등 → {실제 장치경로: 별칭경로}"""
-    out = {}
-    d = Path(dirname)
-    if not d.is_dir():
-        return out
-    for link in sorted(d.iterdir()):
-        try:
-            out.setdefault(os.path.realpath(link), str(link))
-        except OSError:
-            pass
-    return out
-
-
 SIM_FILE = Path(__file__).resolve().parent / "openmimic_sim.json"     # tools_simarms.py 가 켜져 있을 때만 있음
 SIM_DIR = Path(__file__).resolve().parent / "openmimic_sim"
 
 
 def serial_path_ok(p):
-    """포트 경로 검사 — /dev/… 또는 가상 팔(tools_simarms) 의 openmimic_sim/<이름> 링크."""
-    return isinstance(p, str) and (p.startswith("/dev/") or p.startswith(str(SIM_DIR) + os.sep))
+    """포트 문자열 검사 — 플랫폼별 실제 포트 모양 또는 가상 팔(tools_simarms) 의 openmimic_sim/<이름> 링크."""
+    return isinstance(p, str) and (P.serial_port_ok(p) or p.startswith(str(SIM_DIR) + os.sep))
+
+
+def port_present(port):
+    """지정한 포트가 지금 연결돼 있는지 (Windows 는 by-id·USB 위치로 COM 을 찾을 수 있는지)."""
+    return P.port_exists(port)
 
 
 def _sim_ports():
     """가상 팔 도구가 켜져 있으면 그 보드들. 꺼져 있거나 죽었으면 빈 목록."""
     d = load_json(SIM_FILE, {})
     pid = d.get("pid") if isinstance(d, dict) else None
-    if not pid:
-        return []
-    try:
-        os.kill(int(pid), 0)
-    except (OSError, ValueError):
+    if not pid or not P.pid_exists(pid):
         return []
     return [p for p in d.get("ports", []) if os.path.exists(p.get("path", ""))]
 
@@ -1964,11 +1899,7 @@ SIM_CAM = {"width": 320, "height": 240, "fps": 30}
 def sim_state():
     d = load_json(SIM_FILE, {})
     pid = d.get("pid") if isinstance(d, dict) else None
-    try:
-        if not pid:
-            raise OSError
-        os.kill(int(pid), 0)
-    except (OSError, ValueError):
+    if not pid or not P.pid_exists(pid):
         return {"on": False}
     d["on"] = True
     d["cams"] = [c for c in d.get("cams", []) if isinstance(c, dict) and c.get("path")]
@@ -2068,7 +1999,7 @@ def sim_stop():
         kill_job(j["id"])
     elif st.get("pid"):
         try:
-            os.kill(int(st["pid"]), signal.SIGTERM)
+            P.terminate(st["pid"])
         except (OSError, ValueError):
             pass
     back = ""
@@ -2182,28 +2113,20 @@ def sim_panel_html():
 
 
 def list_serial_ports():
-    """시리얼 후보 나열. udev 심볼릭 링크가 전혀 없어도 동작합니다."""
-    by_id = _alias_map("/dev/serial/by-id")
-    by_path = _alias_map("/dev/serial/by-path")
-    devs = set()
-    for pat in ("/dev/ttyACM*", "/dev/ttyUSB*"):
-        devs.update(glob.glob(pat))
-    devs.update(by_id)          # 위 패턴에 안 걸리는 이름까지 포함
-    devs.update(by_path)
+    """시리얼 후보 나열. udev 심볼릭 링크가 전혀 없어도 동작합니다 (장치 목록은 openmimic_platform)."""
     used = {}
     for side, arm in ARM_CFGS.items():
         for role in ("follower", "leader"):
             p = arm.get(f"{role}_port")
             if p:
-                used.setdefault(os.path.realpath(p) if os.path.exists(p) else p, []).append(
-                    f"{side}/{role}" if BIMANUAL else role)
+                used.setdefault(P.port_key(p), []).append(f"{side}/{role}" if BIMANUAL else role)
     out = []
-    for dev in sorted(devs):
-        info = usb_info(dev)
+    for e in P.list_serial_ports():
+        dev, info = e["dev"], e["usb"]
         out.append({
             "dev": dev,
-            "by_id": by_id.get(dev, ""),
-            "by_path": by_path.get(dev, ""),
+            "by_id": e["by_id"],
+            "by_path": e["by_path"],
             "usb": info,
             "label": (f"{info.get('manufacturer', '')} {info.get('product', '')}".strip()
                       or os.path.basename(dev)),
@@ -2223,8 +2146,7 @@ CAM_SNAPS = {}      # realpath(dev) -> jpeg bytes (셋업 탭 카메라 식별�
 
 
 def _snap_key(dev):
-    dev = str(dev)
-    return os.path.realpath(dev) if dev.startswith("/dev/") else dev
+    return P.camera_key(dev)
 
 
 def camera_snapshot(dev, warm=6, width=320):
@@ -2235,8 +2157,11 @@ def camera_snapshot(dev, warm=6, width=320):
     except ImportError:
         return None
     d = str(dev)
-    target = int(d) if d.isdigit() else d
-    cap = cv2.VideoCapture(target)
+    try:
+        target, backend = P.resolve_camera(int(d) if d.isdigit() else d)
+    except OSError:
+        return None
+    cap = cv2.VideoCapture(target) if backend is None else cv2.VideoCapture(target, backend)
     try:
         if not cap.isOpened():
             return None
@@ -2259,33 +2184,13 @@ def camera_snapshot(dev, warm=6, width=320):
 
 
 def list_video_devices():
-    """카메라 후보. lerobot OpenCVCamera.find_cameras() 를 쓰되,
-    실패하면 /dev/video* 나열로 폴백합니다.
-
-    같은 모델 카메라 2개(wrist ×2)는 USB 시리얼 번호가 없으면 /dev/v4l/by-id 이름이 겹쳐
-    어느 링크가 어느 카메라인지 부팅마다 바뀔 수 있습니다. 시리얼 포트와 같은 규칙으로
-    시리얼 번호가 있을 때만 by-id, 없으면 by-path(물리 USB 포트 고정) 를 씁니다."""
-    by_id = _alias_map("/dev/v4l/by-id")
-    by_path = _alias_map("/dev/v4l/by-path")
-
-    def entry(dev, prof=None, name=""):
-        real = os.path.realpath(dev) if dev.startswith("/dev/") else dev
-        info = usb_info(dev, "video4linux") if dev.startswith("/dev/") else {}
-        prof = prof or {}
-        return {"dev": dev, "by_id": by_id.get(real, ""), "by_path": by_path.get(real, ""),
-                "usb": info, "width": prof.get("width"), "height": prof.get("height"),
-                "fps": prof.get("fps"), "name": name}
-
-    found = []
-    try:
-        from lerobot.cameras.opencv import OpenCVCamera
-        for c in OpenCVCamera.find_cameras():
-            found.append(entry(str(c.get("id")), c.get("default_stream_profile"), c.get("name", "")))
-    except Exception as e:
-        for dev in sorted(glob.glob("/dev/video*")):
-            found.append(entry(dev, None, f"(probe 실패: {e})"))
+    """카메라 후보 (openmimic_platform.list_cameras) + 가상 장치 카메라 + 식별용 썸네일.
+    같은 모델 카메라 2개(wrist ×2)는 시리얼 포트와 같은 규칙으로 시리얼 번호가 있을 때만 by-id,
+    없으면 by-path(물리 USB 포트 고정) 를 씁니다."""
+    found = P.list_cameras()
     for c in sim_state().get("cams", []):           # 가상 장치가 켜져 있으면 가상 카메라
-        found.append(entry(c["path"], {"width": 320, "height": 240, "fps": 30}, f"가상 카메라 {c['name']}"))
+        found.append({"dev": c["path"], "by_id": "", "by_path": "", "usb": {}, "width": 320, "height": 240,
+                      "fps": 30, "name": f"가상 카메라 {c['name']}"})
     CAM_SNAPS.clear()
     for f in found:
         jpg = camera_snapshot(f["dev"])
@@ -2306,6 +2211,7 @@ def probe_port(port, full=False):
     """포트에 붙은 모터 ID 를 나열합니다 (기종에 맞는 버스: Feetech / Dynamixel).
     full=False 면 기본 보드레이트(1 Mbps)만 — 웹에서 쓰기에 scan_port 는 너무 느립니다."""
     Bus = bus_class()
+    port = P.resolve_serial_port(port)
     if full:
         found = Bus.scan_port(port)
         return {"baudrates": {str(b): sorted(ids) for b, ids in found.items()}}
@@ -3778,14 +3684,14 @@ def _preflight_ports():
         for role in ("follower", "leader"):
             port = arm.get(f"{role}_port") or ""
             tag = f"{side}/{role}" if BIMANUAL else role
-            if not Path(port).exists():
+            if not port_present(port):
                 bad.append(f"{tag}: {port or '(미지정)'} 가 없습니다 — USB 를 다시 꽂고 셋업 탭에서 재지정")
                 continue
             try:
                 ids = probe_port(port).get("ids") or []
             except Exception as e:
                 bad.append(f"{tag}: {port} 를 열 수 없습니다 ({type(e).__name__}: {e}) — "
-                           f"다른 프로그램이 잡고 있거나 dialout 권한 문제")
+                           f"{P.TEXT['port_open_fail']}")
                 continue
             if not ids:
                 bad.append(f"{tag}: {port} 에서 모터 응답이 없습니다 — 전원과 케이블을 확인하세요")
@@ -3814,7 +3720,7 @@ def power_preflight(roles=("follower", "leader")):
     for side, arm in ARM_CFGS.items():
         for role in roles:
             port = arm.get(f"{role}_port") or ""
-            if not port or not Path(port).exists():
+            if not port or not port_present(port):
                 continue                       # 없는 포트는 _preflight_ports 가 따로 막습니다
             tag = f"{side}/{role}" if BIMANUAL else role
             try:
@@ -4055,7 +3961,7 @@ FAILURE_HINTS = [
     (r"Overload|overload", "모터 과부하 — 팔이 막혔거나 너무 무거운 걸 들었습니다. 전원을 껐다 켜고 제어에서 토크를 끈 뒤 확인하세요."),
     (r"motor check failed|Missing motor|missing motors|There is no status packet",
      "모터가 응답하지 않습니다 — 케이블·전원·모터 ID 를 확인하세요 (Setup → 팔 점검)."),
-    (r"Permission denied.*tty|PermissionError.*tty", "포트 권한이 없습니다 — dialout 그룹에 추가 후 다시 로그인하세요."),
+    (P.TEXT["perm_regex"], P.TEXT["perm_hint"]),
     (r"could not open port|No such file or directory: '/dev|Failed to open port|SerialException",
      "시리얼 포트를 열지 못했습니다 — 포트 경로(Setup), USB 연결, 다른 프로그램(제어 탭 등)이 잡고 있는지 확인하세요."),
     (r"failed to set capture_(width|height|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — Setup 카메라 설정을 바꾸세요."),
@@ -6519,8 +6425,8 @@ def _validate_cam(name, spec, seen):
         return f"카메라 {name} 형식 오류"
     idx = spec.get("index_or_path")
     if isinstance(idx, str):
-        if not idx.startswith("/dev/") and openmimic_simcam.sim_cam_name(idx) is None:
-            return f"카메라 {name} 경로는 /dev/ 로 시작해야 합니다"
+        if not P.camera_path_ok(idx) and openmimic_simcam.sim_cam_name(idx) is None:
+            return f"카메라 {name} 경로는 {P.camera_path_hint()}"
     elif not isinstance(idx, int) or isinstance(idx, bool) or idx < 0:
         return f"카메라 {name} 인덱스가 잘못됨"
     for k, lo, hi in (("width", 32, 8192), ("height", 32, 8192), ("fps", 1, 240)):
@@ -6546,6 +6452,11 @@ def cam_fourcc_kw(spec):
     """정했을 때만 넘깁니다 — 지정 안 한 카메라는 예전과 똑같이 만들어집니다."""
     f = cam_fourcc(spec)
     return {"fourcc": f} if f else {}
+
+
+def cam_backend_kw(backend):
+    """OpenCV 백엔드는 정해진 플랫폼(Windows: DirectShow)에서만 넘깁니다 — Linux 는 지정하지 않음 (예전과 같음)."""
+    return {"backend": backend} if backend is not None else {}
 
 
 def validate_config(cfg):
@@ -6593,8 +6504,8 @@ def validate_config(cfg):
             if not port:
                 continue
             if not serial_path_ok(port):
-                return f"{side}/{role} 포트는 /dev/… (또는 가상 팔 openmimic_sim/…) 경로여야 합니다: {port}"
-            real = os.path.realpath(port)
+                return f"{side}/{role} {P.serial_port_hint()}: {port}"
+            real = P.port_key(port)
             if real in seen_ports:
                 return f"같은 포트를 두 곳에 지정했습니다: {port} ({seen_ports[real]} 와 중복)"
             seen_ports[real] = f"{side}/{role}"
@@ -6666,7 +6577,7 @@ async def api_setup_probe(req: Request):
     b = await req.json()
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
-        return JSONResponse({"error": "포트는 /dev/… (또는 가상 팔 openmimic_sim/…) 경로여야 합니다"}, status_code=400)
+        return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
     if WATCH.on:
         return JSONResponse({"error": "포트 감시 중에는 probe 불가 — 감시를 먼저 중지하세요"}, status_code=400)
     busy = exclusive_busy()
@@ -6721,7 +6632,7 @@ async def api_motors_start(req: Request):
     b = await req.json()
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
-        return JSONResponse({"error": "포트는 /dev/… (또는 가상 팔 openmimic_sim/…) 경로여야 합니다"}, status_code=400)
+        return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
     busy = exclusive_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
@@ -6762,7 +6673,7 @@ async def api_armcheck_start(req: Request):
     b = await req.json()
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
-        return JSONResponse({"error": "포트는 /dev/… (또는 가상 팔 openmimic_sim/…) 경로여야 합니다"}, status_code=400)
+        return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
     role = b.get("role") if b.get("role") in ("leader", "follower") else ""
     busy = exclusive_busy()
     if busy:
@@ -6809,7 +6720,7 @@ def _stable_port(pinfo):
 def _port_entry(ports, path):
     if not path:
         return None
-    real = os.path.realpath(path)
+    real = P.port_key(path)
     for pe in ports:
         if path in (pe["dev"], pe.get("by_id"), pe.get("by_path")) or real == pe["dev"]:
             return pe
@@ -6874,7 +6785,7 @@ async def api_wizard_assign(req: Request):
     cfg = json.loads(json.dumps(CFG))
     for a in cfg["arms"]:                       # 같은 보드가 다른 칸에 지정돼 있으면 비웁니다
         for r in ("follower", "leader"):
-            if a.get(f"{r}_port") and os.path.realpath(a[f"{r}_port"]) == pe["dev"]:
+            if a.get(f"{r}_port") and P.port_key(a[f"{r}_port"]) == pe["dev"]:
                 a[f"{r}_port"] = ""
     next(a for a in cfg["arms"] if a["side"] == side)[f"{role}_port"] = stable
     err = validate_config(cfg)
@@ -8054,7 +7965,7 @@ function paintPorts(st){
       +(st&&st[p.dev]&&st[p.dev].err?'<span class=tiny style="color:var(--bad)">'+E(st[p.dev].err)+'</span>':'')+'</td>'
       +'<td style="text-align:right"><button data-dev="'+E(p.dev)+'" class="'+(best===p.dev?'primary':'')+'">이 포트로 지정</button></td></tr>';
   });
-  if(!W.ports.length) h+='<tr><td colspan=5 class=muted>시리얼 포트가 없습니다 — USB 와 dialout 권한을 확인하세요</td></tr>';
+  if(!W.ports.length) h+='<tr><td colspan=5 class=muted>""" + P.TEXT["no_ports_js"] + """</td></tr>';
   t.innerHTML=h;
   t.querySelectorAll('button[data-dev]').forEach(b=>b.onclick=()=>assign(b.dataset.dev,b));
   $('wsug').innerHTML=best?'<b style="color:var(--ok)">'+E(best)+'</b> 가 움직였습니다 — 맞으면 지정하세요':(WATCHING?'팔을 움직이는 중… ':'');
@@ -8396,11 +8307,7 @@ SETUP_HTML = """
     travel = 감시 시작 이후 엔코더가 움직인 최대 폭(tick, 4096 = 1바퀴).
     probe 는 1 Mbps 기본 보드레이트만 봅니다 — 응답이 없으면 <b>전체 스캔</b>으로 보드레이트를 찾으세요.
     <b>1,2,3,4,5,6</b> 이 다 뜨면 모터 ID 세팅은 건너뛰어도 됩니다.<br>
-    지정 경로는 <b>보드에 USB 시리얼 번호가 있으면</b>(sn 표시) <span class=mono>/dev/serial/by-id</span> —
-    보드 자체를 따라가므로 <b>어느 USB 구멍에 꽂아도</b> 됩니다. 대신 보드를 다른 팔로 옮겨 달면 설정이 어긋나니
-    보드에 sn 뒷자리를 적어 붙여 두세요.<br>
-    <b>sn 이 없으면</b> 같은 모델끼리 by-id 가 겹치므로 <span class=mono>/dev/serial/by-path</span> 를 씁니다 —
-    꽂은 USB 물리 포트에 고정되니 이 경우엔 <b>항상 같은 USB 구멍에</b> 꽂아야 합니다.
+    """ + P.TEXT["port_note_html"] + """
   </p></details>
 </div>
 
@@ -8620,7 +8527,7 @@ function renderPorts(){
   Object.keys(ROWS).forEach(k=>delete ROWS[k]);
   if(!PORTS.length){
     t.innerHTML+='<tr><td colspan=6 class=muted>시리얼 장치가 없습니다 — '
-                +'USB 를 꽂고 다시 스캔하세요 (권한 문제면 dialout 그룹 확인)</td></tr>';
+                +'""" + P.TEXT["no_ports2_js"] + """</td></tr>';
     return;
   }
   PORTS.forEach(p=>{
@@ -9854,9 +9761,10 @@ def _cam_configs(specs):
     from lerobot.cameras.opencv import OpenCVCameraConfig
     out = {}
     for name, sp in specs.items():
-        idx = sp["index_or_path"]
+        idx, backend = P.resolve_camera(sp["index_or_path"])
         idx = idx if isinstance(idx, int) else Path(str(idx))
         out[name] = OpenCVCameraConfig(index_or_path=idx, fps=int(sp["fps"]), **cam_fourcc_kw(sp),
+                                       **cam_backend_kw(backend),
                                        width=int(sp["width"]), height=int(sp["height"]))
     return out
 
@@ -9939,7 +9847,6 @@ class _Preview:
 
 def worker_record(jid):
     import logging
-    import signal as _sig
     j = load_json(JOB_DIR / f"{jid}.json", {})
     spec = j.get("spec") or {}
     rd = run_dir(jid)
@@ -10002,8 +9909,7 @@ def worker_record(jid):
     put(phase="starting", t0=time.time())
 
     threading.Thread(target=poll_cmd, daemon=True).start()
-    _sig.signal(_sig.SIGINT, lambda *_: on_key("q"))     # 작업 탭 '중지' = q 와 동일
-    _sig.signal(_sig.SIGTERM, lambda *_: on_key("q"))
+    P.install_stop_handlers(lambda *_: on_key("q"))     # 작업 탭 '중지' = q 와 동일 (SIGINT·SIGTERM·Windows CTRL_BREAK)
 
     dataset = robot = teleop = preview = None
     rc = 0

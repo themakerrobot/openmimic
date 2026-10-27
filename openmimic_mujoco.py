@@ -22,14 +22,15 @@ tools_simarms.py 가 가상 팔로워의 '몸' 으로 씁니다. 서보 프로�
 모델: urdf/so101_new_calib.xml (TheRobotStudio SO-ARM100, Apache 2.0). 책상·물체·카메라는 불러올 때 붙입니다.
 """
 import math
-import os
 import threading
 from pathlib import Path
 
 import numpy as np
 
+import openmimic_platform as P
+
 HERE = Path(__file__).resolve().parent
-FRAME_DIR = Path("/dev/shm/openmimic_sim") if Path("/dev/shm").is_dir() else HERE / "openmimic_sim"
+FRAME_DIR = P.frame_dir()
 FRAME_MAGIC = 0x4F4D5331
 
 # ============================================================================ 로봇
@@ -225,36 +226,10 @@ def available(robot="so101"):
     return importlib.util.find_spec("mujoco") is not None and robot in ROBOTS and Path(ROBOTS[robot]["mjcf"]).is_file()
 
 
-def _setup_gl():
-    """렌더 백엔드 — GPU 가속 EGL(Intel 내장 GPU 등) 이 되면 EGL, 아니면 OSMesa(CPU).
-    EGL 이 소프트웨어(llvmpipe)로만 돌면 OSMesa 보다 느려서 OSMesa 를 고릅니다.
-    MuJoCo 는 import 할 때 백엔드를 정하므로 별도 프로세스로 시험합니다. 이미 지정돼 있으면(MUJOCO_GL) 그대로."""
-    if os.environ.get("MUJOCO_GL"):
-        return
-    import subprocess
-    import sys
-    probe = ("import mujoco\n"
-             "m = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom size=\\'.1\\'/></worldbody></mujoco>')\n"
-             "r = mujoco.Renderer(m, 32, 32); r.update_scene(mujoco.MjData(m)); r.render()\n"
-             "from OpenGL import GL\n"
-             "print((GL.glGetString(GL.GL_RENDERER) or b'').decode(errors='ignore'))\n")
-    found = {}
-    for gl in ("egl", "osmesa"):
-        try:
-            r = subprocess.run([sys.executable, "-c", probe], env=dict(os.environ, MUJOCO_GL=gl),
-                               capture_output=True, text=True, timeout=30)
-        except (OSError, subprocess.TimeoutExpired):
-            continue
-        if r.returncode == 0:
-            found[gl] = r.stdout.strip().lower()
-    soft = ("llvmpipe", "softpipe", "swrast")
-    if "egl" in found and not any(x in found["egl"] for x in soft):
-        os.environ["MUJOCO_GL"] = "egl"
-    elif "osmesa" in found:
-        os.environ["MUJOCO_GL"] = "osmesa"
-    else:
-        os.environ["MUJOCO_GL"] = "egl"
-    os.environ["OPENMIMIC_GL_INFO"] = found.get(os.environ["MUJOCO_GL"], "")
+def gl_ready():
+    """렌더 백엔드(MUJOCO_GL)를 정하고 렌더를 쓸 수 있으면 True — openmimic_platform.setup_mujoco_gl.
+    MuJoCo 는 import 할 때 백엔드를 정하므로 World 를 만들기 전에 부릅니다."""
+    return P.setup_mujoco_gl()
 
 
 def _look_at(pos, target, up=(0, 0, 1)):
@@ -297,7 +272,8 @@ class World:
     """MuJoCo 장면 하나 — 물리 스텝·카메라 렌더·시연 궤적·성공 판정. 모든 접근은 self.lock 으로."""
 
     def __init__(self, robot="so101", task="cube_to_target", cam_size=(320, 240), cams=("top", "wrist"), seed=None):
-        _setup_gl()
+        if not gl_ready():
+            raise RuntimeError("MuJoCo 렌더 백엔드를 쓸 수 없습니다 (MUJOCO_GL)")
         import mujoco
         self.mj = mujoco
         self.robot_name = robot
@@ -435,8 +411,11 @@ class World:
         path = FRAME_DIR / f"cam_{name}.rgb"
         if f is None or f["shape"] != (h, w):
             size = 16 + h * w * 3
-            with open(path, "wb") as fh:
-                fh.truncate(size)
+            # 크기가 같은 파일이 이미 있으면 그대로 다시 씁니다 — Windows 는 다른 프로세스(가상 카메라)가
+            # 매핑 중인 파일을 잘라내거나 지울 수 없습니다 (Linux 는 시작 때 옛 프레임을 지워 두므로 항상 새 파일)
+            if not (path.is_file() and path.stat().st_size == size):
+                with open(path, "wb") as fh:
+                    fh.truncate(size)
             mm = np.memmap(path, dtype=np.uint8, mode="r+", shape=(size,))
             mm[:16] = np.frombuffer(np.array([FRAME_MAGIC, w, h, 0], dtype=np.uint32).tobytes(), np.uint8)
             f = self._frames[name] = {"mm": mm, "shape": (h, w), "seq": 0}

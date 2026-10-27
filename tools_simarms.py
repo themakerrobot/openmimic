@@ -48,6 +48,8 @@ from pathlib import Path
 
 import numpy as np
 
+import openmimic_platform as P
+
 ROOT = Path(__file__).resolve().parent
 SIM_DIR = ROOT / "openmimic_sim"
 SIM_FILE = ROOT / "openmimic_sim.json"
@@ -419,12 +421,20 @@ def main(argv=None):
     ap.add_argument("--cam", default="320x240", help="가상 카메라 해상도 (물리 시뮬레이션 렌더)")
     a = ap.parse_args(argv)
     world = None
-    stale = Path("/dev/shm/openmimic_sim")
+    stale = P.frame_dir()
     for f in (stale.glob("cam_*.rgb") if stale.is_dir() else []):
-        f.unlink()                       # 전에 죽은 물리 시뮬레이션이 남긴 렌더 프레임 — 남아 있으면 가상 카메라가 옛 화면을 보여 줌
+        try:
+            f.unlink()                   # 전에 죽은 물리 시뮬레이션이 남긴 렌더 프레임 — 남아 있으면 가상 카메라가 옛 화면을 보여 줌
+        except OSError:
+            pass                         # Windows: 가상 카메라가 아직 매핑 중 — 첫 렌더가 덮어씁니다
     if a.physics != "none" and a.robot == "so101" and a.mode == "single":
         import openmimic_mujoco as om
-        if om.available(a.robot):
+        if om.available(a.robot) and not om.gl_ready():
+            print("물리 시뮬레이션: MuJoCo 렌더 백엔드를 쓸 수 없어 물리 시뮬레이션 없이 켭니다 "
+                  f"(MUJOCO_GL={os.environ.get('MUJOCO_GL', '')})", flush=True)
+            if a.physics == "mujoco":
+                sys.exit("MuJoCo 렌더 백엔드를 쓸 수 없습니다")
+        elif om.available(a.robot):
             cw, ch = (int(v) for v in a.cam.lower().split("x"))
             world = om.World(robot=a.robot, cam_size=(cw, ch))
             print(f"물리 시뮬레이션: MuJoCo (렌더 {os.environ.get('MUJOCO_GL')} · {os.environ.get('OPENMIMIC_GL_INFO', '')})", flush=True)

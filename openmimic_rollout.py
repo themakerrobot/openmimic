@@ -16,12 +16,13 @@
 """
 import json
 import os
-import signal
 import sys
 import threading
 import time
 from collections import deque
 from pathlib import Path
+
+import openmimic_platform as P
 
 PREVIEW_FPS = 10
 
@@ -85,7 +86,7 @@ class Monitor:
                 if why:
                     say(f"[openmimic] 서보 상태 이상으로 멈춥니다: {why}")
                     mon.set(health_stop=why)
-                    os.kill(os.getpid(), signal.SIGINT)     # 작업 탭 '중지' 와 같은 경로 (시작 자세 복귀·토크 해제)
+                    P.interrupt_self()     # 작업 탭 '중지' 와 같은 경로 (시작 자세 복귀·토크 해제)
             mon.ticks.append(time.monotonic())
             for key, v in o.items():
                 if getattr(v, "ndim", 0) == 3:
@@ -227,6 +228,7 @@ def main(argv=None):
         return 0
     import openmimic_simcam
     openmimic_simcam.install()          # 가상 카메라 경로(openmimic_sim/cam_*)면 합성 영상
+    P.forward_break_to_sigint()         # Windows 작업 탭 '중지'(CTRL_BREAK) = SIGINT 와 같은 정리 경로
     lw, rest = _pop_opts(argv, "--openmimic.")
     ov_opts, rest = _pop_opts(rest, "--ov.")
     engine = (lw.get("engine") or ("ov" if ov_opts else "torch")).lower()

@@ -1,7 +1,7 @@
 """OpenMimic 가상 카메라 — 가상 팔(tools_simarms)과 함께 쓰는 합성 영상 카메라.
 
 카메라 경로가 openmimic_sim/cam_<이름> 이면 실제 장치를 열지 않고 가상 영상을 돌려줍니다.
-물리 시뮬레이션(openmimic_mujoco)이 켜져 있으면 그 렌더 화면(/dev/shm/openmimic_sim/cam_<이름>.rgb),
+물리 시뮬레이션(openmimic_mujoco)이 켜져 있으면 그 렌더 화면(openmimic_platform.frame_dir()/cam_<이름>.rgb),
 아니면 움직이는 도형을 그린 합성 화면입니다.
 그 밖의 경로·번호는 원래 cv2.VideoCapture 객체가 그대로 만들어집니다 (실제 카메라는 전혀 바뀌지 않음).
 
@@ -17,9 +17,11 @@ import time
 import zlib
 from pathlib import Path
 
+import openmimic_platform as P
+
 SIM_DIR = Path(__file__).resolve().parent / "openmimic_sim"
 PREFIX = str(SIM_DIR / "cam_")
-FRAME_DIR = Path("/dev/shm/openmimic_sim") if Path("/dev/shm").is_dir() else SIM_DIR     # openmimic_mujoco 와 같은 곳
+FRAME_DIR = P.frame_dir()     # openmimic_mujoco 와 같은 곳 (Linux /dev/shm, Windows 임시 폴더)
 MAGIC = 0x4F4D5331
 _installed = False
 
