@@ -21,7 +21,8 @@ groups                                                                   # rende
 - Ubuntu 26.04 + Core Ultra 에서는 기본 설치만으로 `['CPU', 'GPU', 'NPU']` 가 잡혔습니다 (실기 확인).
 - Windows(`win-intel`, [INSTALL.md](INSTALL.md#windows-10--11--installps1-시험-단계))는 `install.ps1` 이 OpenVINO 까지 설치하고 같은 점검을 합니다.
   NPU 는 장치 관리자의 **신경 프로세서**(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버가 필요합니다.
-  **Windows 에서 NPU 변환·추론은 아직 실기 확인 전**입니다 ([WINDOWS_PORT.md](WINDOWS_PORT.md)).
+  Windows 실기(Core Ultra 200V)에서 OpenVINO 가 `CPU GPU NPU` 를 잡는 것과 XPU 휠(`xpu: True`, Arc 140V) 설치까지 확인했고,
+  **NPU 변환·추론과 XPU 학습은 아직 확인 전**입니다 ([WINDOWS_PORT.md](WINDOWS_PORT.md)).
 
 ## 2. 모델 가져오기
 

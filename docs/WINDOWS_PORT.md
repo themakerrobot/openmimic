@@ -5,7 +5,7 @@
 **요약**
 
 - Ubuntu 는 가상 장치 전 구성 회귀 시험을 통과했습니다. 변경 전 코드로 같은 시험을 돌려 결과를 비교했습니다.
-- **Windows 실기 시험은 하지 못했습니다** (시험 서버가 Linux 이고 Windows 기기가 없음).
+- Windows 실기에서는 **설치까지만 확인**했습니다 (Core Ultra 200V · Arc 140V 기기, `win-intel`). 서버 실행·팔·카메라·가상 장치는 아직입니다.
 - Windows 쪽은 다음까지만 확인했습니다.
   - 모의 장치로 논리 시험
   - 출력 파싱 시험
@@ -80,10 +80,10 @@
 | `openmimic_platform.py` `setup_mujoco_gl` | 원격 데스크톱·서비스 세션처럼 데스크톱이 없을 때 `wgl` 숨은 창이 만들어지는지 |
 | `openmimic_mujoco.py` `_write_frame` | 쓰는 쪽·읽는 쪽이 같은 파일을 동시에 memmap 할 때 |
 | `main.py` `RUN_DIR` | 읽는 중인 상태 파일에 `os.replace` 가 PermissionError — 그 차례 갱신만 건너뜀 (OSError 처리됨). 화면이 늦게 갱신되는 정도인지 |
-| `install.ps1` XPU | Windows XPU 휠로 Intel GPU 학습이 되는지 (못 받으면 CPU 휠로 계속) |
+| `install.ps1` XPU | 휠 설치·장치 인식은 확인 (`2.11.0+xpu`, `xpu: True`, Arc 140V). **학습이 실제로 도는지**는 아직 |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
 | `install.ps1` PyAV | Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 있는지 — 수집 영상 인코딩 |
-| `install.ps1` OpenVINO | Core Ultra Windows 에서 OpenVINO 가 NPU 를 잡고 `openmimic_ov` 변환·추론이 되는지 |
+| `install.ps1` OpenVINO | OpenVINO 가 `CPU GPU NPU` 를 잡는 것은 확인. `openmimic_ov` 변환·NPU 추론은 아직 |
 | `openmimic.ps1` autostart | 관리자 권한 없는 계정에서 ONLOGON 작업 만들기가 되는지 (안 되면 시작프로그램 폴더로 대신) |
 
 ## 5. 단계 5 — lerobot Windows 호환 확인 결과
@@ -92,8 +92,8 @@
 |---|---|---|
 | 영상 인코딩·디코딩 | **우회 (설계상 PyAV 강제) · Windows 실행 미확인** | 설치 스크립트가 양쪽 OS 모두 `torchcodec` 을 지웁니다. lerobot `e40b58a` 는 torchcodec 이 없으면 디코딩을 PyAV 로 바꾸고, 인코딩은 원래 PyAV 입니다. Windows PyAV 휠에 libsvtav1 이 있는지는 확인하지 못했습니다 |
 | lerobot `find_cameras()` | **우회** | Windows 에서는 인덱스 0~N 을 기본 백엔드로 하나씩 열어 봐 느리고, 안정 식별자가 없습니다. OpenMimic 은 DirectShow 나열(pygrabber → ffmpeg)을 먼저 쓰고, 둘 다 안 될 때만 `find_cameras()` 로 내려갑니다. 열 때는 인덱스 + `CAP_DSHOW` 를 lerobot 카메라 설정 `backend` 로 넘깁니다 |
-| OpenVINO NPU (`openmimic_ov.py`) | **확인 못 함** | 변환·추론 코드에는 OS 의존이 없습니다 (경로·장치 이름만 씀). NPU 가 잡히는지는 Core Ultra Windows 기기에서 확인해야 합니다 |
-| `OPENMIMIC_TORCH=xpu` Windows | **확인 못 함 — 막지 않고 실험적으로 둠** | Linux 판과 같이 XPU 인덱스를 먼저 시도하고, 못 받으면 CPU 휠로 계속합니다. 실기에서 안 되면 지시대로 `install.ps1` 의 `xpu` 분기를 막고 안내문만 남기면 됩니다 (`$TorchFlavor` switch 한 곳) |
+| OpenVINO NPU (`openmimic_ov.py`) | **장치 인식 됨 · 변환·추론 미확인** | Windows 실기에서 OpenVINO 2026.4 가 `['CPU', 'GPU', 'NPU']` 를 잡았습니다. 변환·추론 코드에는 OS 의존이 없습니다 (경로·장치 이름만 씀) |
+| `OPENMIMIC_TORCH=xpu` Windows | **설치 됨 · 학습 미확인 — 실험적으로 둠** | CPU 휠로 설치한 뒤 `xpu` 로 다시 돌리면 CPU 휠을 지우고 `torch 2.11.0+xpu` 를 설치했고, `torch.xpu.is_available()` 이 True, 장치 `Intel(R) Arc(TM) 140V GPU` 입니다. lerobot 설치 뒤에도 XPU 휠이 유지됐습니다 |
 | 롤아웃 CLI 의 Windows 경로 | **됨** (Linux 에서 draccus 로 확인) | `C:\Users\…\openmimic_sim\cam_top` 처럼 역슬래시·공백이 든 카메라 경로를 dict 인자에 따옴표 없이 넣어도 그대로 파싱됩니다 |
 
 ## 6. 검증 체크리스트 결과
@@ -137,12 +137,12 @@ lerobot `e40b58a`, torch 2.11, mujoco 3.17 을 썼고 MuJoCo 렌더는 OSMesa �
 
 | # | 항목 | 결과 |
 |---|---|---|
-| 1 | `install.ps1` → `openmimic.ps1 start` → 브라우저 | **못 함** (Windows 기기 없음). PowerShell 실행 파일도 이 시험 환경 정책상 받지 못했습니다. 정적 점검(괄호·here-string 짝, PowerShell 7 전용 문법 없음)만 했습니다 |
+| 1 | `install.ps1` → `openmimic.ps1 start` → 브라우저 | **`install.ps1` 통과** (Windows 실기, `win-intel`, 끝까지 `=== 완료 ===`; 같은 기기에서 `xpu` 로 다시 설치도 통과). `openmimic.ps1 start` 이후는 아직. 실기 설치 로그에서 고친 것: 다시 설치할 때 setuptools 를 최신으로 올려 lerobot·torch 요구 범위 충돌 오류가 찍히던 것(`setuptools<81` 로 고정 — Linux 판도 같이), conda 의 빈 표준오류 줄이 `System.Management.Automation.RemoteException` 으로 찍히던 것 |
 | 2 | 실기 SO-ARM101: 포트 찾기(COM + SN) · 진단 · 캘리브레이션 · 확인 · 제어 · 수집 3 | **못 함**. 포트 해석 논리(시리얼 번호 → COM, USB 위치 → COM, 대소문자 COM, 없는 포트 예외, 형식 검사)는 모의 `comports()` 로 시험해 통과 |
 | 3 | 카메라 2대 등록 → 재부팅 → 같은 장치 | **못 함**. ffmpeg `-list_devices` 옛·새 출력 형식 파싱과 장치 경로에서 시리얼 판별은 시험해 통과 |
 | 4 | 가상 장치 + MuJoCo(wgl) | **못 함**. 가상 시리얼(소켓)은 OS 기능을 쓰지 않아 Linux 와 같은 코드입니다. `wgl` 렌더는 미확인 |
 | 5 | Ubuntu 데이터셋·캘리브레이션 zip·모델을 Windows 로 가져와 학습·실행 | **못 함**. 포맷은 바꾸지 않았습니다 |
-| 6 | Core Ultra: OpenVINO 변환 → NPU 실행 | **못 함** |
+| 6 | Core Ultra: OpenVINO 변환 → NPU 실행 | **장치 인식만 확인** (`CPU GPU NPU`). 변환·실행은 아직 |
 | 7 | 작업 중지·강제 중지 | **못 함**. 코드는 CTRL_BREAK(정상) / `taskkill /T /F`(강제), 처리기는 SIGINT·SIGTERM·SIGBREAK |
 
 Windows 실기 시험은 위 7개 항목과 4절 목록을 같이 확인하면 됩니다.

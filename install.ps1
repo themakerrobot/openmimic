@@ -60,7 +60,10 @@ function Invoke-Logged([string]$Exe, [string[]]$ArgList) {
     $old = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'          # 네이티브 명령의 stderr 를 오류로 보지 않게 (PowerShell 5.1)
     try {
-        & $Exe @ArgList 2>&1 | ForEach-Object { Write-Log ("$_") }
+        # 표준오류 줄은 ErrorRecord 로 옵니다 — 빈 줄이면 문자열이 'System.Management.Automation.RemoteException' 이 되므로 메시지만
+        & $Exe @ArgList 2>&1 | ForEach-Object {
+            if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Log $_.Exception.Message } else { Write-Log ("$_") }
+        }
         return $LASTEXITCODE
     } finally {
         $ErrorActionPreference = $old
@@ -155,7 +158,8 @@ if (Test-Path $Py) {
 }
 Enable-CondaEnv
 Invoke-Logged $Py @('-V') | Out-Null
-if ((Pip @('install', '--upgrade', 'pip', 'setuptools', 'wheel')) -ne 0) { Die "pip 업그레이드 실패" }
+# setuptools 는 lerobot(<81)·torch(<82) 요구 범위 안에서만 올립니다 — 최신으로 올리면 다시 설치할 때 의존성 충돌 오류가 찍힙니다
+if ((Pip @('install', '--upgrade', 'pip', 'wheel', 'setuptools<81')) -ne 0) { Die "pip 업그레이드 실패" }
 
 # ------------------------------------------------------------------ 3. PyTorch
 Log "3. PyTorch 설치 ($Platform)"
@@ -300,6 +304,7 @@ if ((Invoke-Py $Verify) -ne 0) { Die "최종 검증 실패 (위 오류 확인)" 
 
 # ------------------------------------------------------------------- 완료
 Log "완료"
+$trainNote = if ($env:TORCH_LOCAL -eq 'xpu') { '학습은 이 기기 Intel GPU(XPU)로 됩니다 (실험적) — 느리면 학습 탭 실행 위치에서 HF Jobs 를 고르세요.' } else { '학습은 학습 탭 실행 위치에서 HF Jobs 를 고르세요 (Intel GPU 학습: $env:OPENMIMIC_TORCH=''xpu'' 로 다시 설치 — 실험적).' }
 $torchNote = if ($Platform -eq 'win-intel') { " (torch 휠: $(if ($env:TORCH_LOCAL) { $env:TORCH_LOCAL } else { '기본' }))" } else { '' }
 @"
 
@@ -317,7 +322,7 @@ $torchNote = if ($Platform -eq 'win-intel') { " (torch 휠: $(if ($env:TORCH_LOC
 
   * 다른 PC 에서 접속하려면 Windows 방화벽이 8080 포트(python.exe)를 허용해야 합니다 — 처음 켤 때 뜨는 창에서 '허용'.
   * win-intel: 모델 탭 → 체크포인트 "OpenVINO 변환" → 실행 탭에서 추론 엔진 NPU/GPU/CPU 선택.
-               학습은 학습 탭 실행 위치에서 HF Jobs 를 고르세요.
+               $trainNote
   * 시리얼 보드가 COM 포트로 안 보이면 장치 관리자에서 드라이버(CH340/CH343 · CP210x)를 확인하세요.
 
 "@ -split "`n" | ForEach-Object { Write-Log $_.TrimEnd("`r") }

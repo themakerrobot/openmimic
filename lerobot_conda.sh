@@ -163,7 +163,8 @@ else
 fi
 conda activate "${ENV_NAME}"
 python -V
-python -m pip install --upgrade pip setuptools wheel
+# setuptools 는 lerobot(<81)·torch(<82) 요구 범위 안에서만 올립니다 — 최신으로 올리면 다시 설치할 때 의존성 충돌 오류가 찍힙니다
+python -m pip install --upgrade pip wheel "setuptools<81"
 
 # ------------------------------------------------------------------ 3. PyTorch
 log "3. PyTorch 설치 (${PLATFORM})"

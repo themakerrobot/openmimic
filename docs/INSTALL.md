@@ -68,7 +68,8 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
 - 파이썬을 **UTF-8 모드**(`PYTHONUTF8=1`, `-X utf8`)로 돌립니다 — Windows 기본 인코딩(cp949·cp1252)으로는 한국어가 든 설정·로그를
   읽고 쓰다 깨지거나 멈춥니다.
 - `git` 은 미리 있어야 합니다 (`winget install --id Git.Git -e`). 사용자 폴더 경로에 공백이 있으면 conda 를 설치할 수 없어 멈춥니다.
-- 강제 지정: `$env:OPENMIMIC_PLATFORM='win-intel'` · Intel GPU 학습 시험: `$env:OPENMIMIC_TORCH='xpu'` (실험적 — 휠을 못 받으면 CPU 휠로 계속).
+- 강제 지정: `$env:OPENMIMIC_PLATFORM='win-intel'` · Intel GPU 학습 시험: `$env:OPENMIMIC_TORCH='xpu'` (실험적 — 휠을 못 받으면 CPU 휠로 계속.
+  이미 CPU 휠로 설치한 기기에서 다시 돌리면 CPU 휠을 지우고 XPU 휠로 바꿉니다. Core Ultra 200V 에서 설치·장치 인식 확인, 학습은 확인 전).
 - 영상: lerobot 이 쓰는 `torchcodec` 은 지우고 PyAV 로 통일합니다 (Linux 와 같음). 디코딩은 torchcodec 이 없으면 lerobot 이 PyAV 로 바꾸고,
   인코딩(기본 libsvtav1)은 원래 PyAV 입니다.
 
