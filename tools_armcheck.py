@@ -431,6 +431,8 @@ def list_ports():
 
 
 def main(argv=None):
+    import openmimic_fakeserial
+    openmimic_fakeserial.install()          # --port sim://… 면 가상 팔 도구의 보드
     ap = argparse.ArgumentParser(description="SO-101 팔(보드 1개) 불량 점검")
     ap.add_argument("--port", help="서보 드라이버 보드 포트 (생략 시 하나뿐이면 자동)")
     ap.add_argument("--role", choices=("leader", "follower"),

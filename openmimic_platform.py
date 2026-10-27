@@ -58,6 +58,27 @@ def frame_dir() -> Path:
     return shm_dir("openmimic_sim", SIM_DIR)
 
 
+def take_file(path: Path):
+    """명령 파일을 통째로 가져갑니다 (내용 문자열, 없거나 지금 못 가져가면 None).
+    이름을 바꾼 뒤 읽고 지웁니다 — Windows 는 다른 프로세스가 쓰려고 연 파일을 지울 수 없어
+    '읽고 → 지우기' 로 하면 지우기가 실패해 같은 명령이 다시 실행됩니다. 이름 바꾸기가 실패하면 다음 차례에 다시 시도."""
+    path = Path(path)
+    if not path.exists():
+        return None
+    tmp = path.with_name(path.name + ".take")
+    try:
+        os.replace(path, tmp)
+    except OSError:
+        return None
+    try:
+        return tmp.read_text()
+    finally:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
 # ============================================================================ 작업 프로세스
 def spawn_job(cmd, env, stdout, cwd) -> subprocess.Popen:
     """작업 worker 를 OpenMimic 과 다른 프로세스 그룹으로 띄웁니다 — 중지 신호가 OpenMimic 자신에게 가지 않게.
@@ -388,7 +409,7 @@ def serial_port_hint() -> str:
 # 화면·오류 안내 문구 중 OS 에 따라 다른 것. Linux 값은 원래 main.py 문구 그대로입니다.
 if IS_WIN:
     TEXT = {
-        "port_hint": "포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치)여야 합니다",
+        "port_hint": "포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치, 가상 팔은 sim://…)여야 합니다",
         "port_open_fail": "다른 프로그램이 잡고 있거나 COM 포트 드라이버 문제 (장치 관리자 확인)",
         "perm_regex": r"PermissionError.*COM\d+|Access is denied|액세스가 거부",
         "perm_hint": "포트를 열 권한이 없습니다 — 다른 프로그램(시리얼 모니터 등)이 COM 포트를 잡고 있는지 확인하세요.",
@@ -405,7 +426,7 @@ if IS_WIN:
     }
 else:
     TEXT = {
-        "port_hint": "포트는 /dev/… (또는 가상 팔 openmimic_sim/…) 경로여야 합니다",
+        "port_hint": "포트는 /dev/… (또는 가상 팔 sim://…) 경로여야 합니다",
         "port_open_fail": "다른 프로그램이 잡고 있거나 dialout 권한 문제",
         "perm_regex": r"Permission denied.*tty|PermissionError.*tty",
         "perm_hint": "포트 권한이 없습니다 — dialout 그룹에 추가 후 다시 로그인하세요.",

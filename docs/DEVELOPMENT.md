@@ -41,7 +41,8 @@
 | `openmimic_ov.py` | ACT·ACT2 → OpenVINO 변환·검증(`convert`), 장치 조회(`devices`), OpenVINO 추론으로 lerobot-rollout 실행(`rollout`). OpenMimic 은 이 파일을 별도 프로세스로 띄웁니다 |
 | `tools_jscheck.py` | 모든 페이지의 인라인 JS 를 `node --check` 로 파싱 검증 (`--en` 이면 영어 치환 후 검증) |
 | `openmimic_i18n_en.json` | 영어 화면 사전 — 한국어 조각 → 영어 (한/EN 버튼) |
-| `tools_simarms.py` | 가상 팔 — PTY 위에서 STS3215 / Dynamixel X 를 흉내. 켜 있으면 `openmimic_sim.json` 에 포트·가상 카메라를 알리고 OpenMimic 포트 목록에 추가됨. 셋업 화면의 '가상 장치 켜기' 가 작업으로 띄움 |
+| `tools_simarms.py` | 가상 팔 — STS3215 / Dynamixel X 보드를 흉내내 `sim://<이름>` 포트로 내놓음 (127.0.0.1 소켓). 켜 있으면 `openmimic_sim.json` 에 포트·접속 주소·가상 카메라를 알리고 OpenMimic 포트 목록에 추가됨. 셋업 화면의 '가상 장치 켜기' 가 작업으로 띄움 |
+| `openmimic_fakeserial.py` | 가상 팔 포트 — `serial.Serial(port="sim://…")` 만 `FakeSerial`(소켓으로 가상 팔 도구의 보드에 연결)로 바꾸고 실제 포트는 그대로. 서버·수집 worker·롤아웃·점검 도구가 시작할 때 `install()` |
 | `openmimic_simcam.py` | 가상 카메라 — `openmimic_sim/cam_<이름>` 경로면 합성 영상, 아니면 원래 `cv2.VideoCapture` |
 | `openmimic_health.py` | 서보 상태 감시 — 시작 전 전원 점검(`power_check` 계열)과 실행 중 온도·전압·보호 플래그 감시(`HealthGuard`) |
 | `openmimic_platform.py` | Linux / Windows 차이를 모은 곳 — 시리얼 포트·카메라 나열과 식별자 해석, 작업 프로세스 띄우기·중지·생존 확인, 공유 폴더, MuJoCo 렌더 백엔드, OS 별 안내 문구 |
@@ -504,7 +505,16 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 - 켜기 전 환경을 `sync_active_env()` 로 그 환경 파일에 보관하고, 가상 환경에 `sim_prev_env` 로 적어 둡니다.
   `POST /api/sim/stop` 은 가상 팔을 쓰는 연결·작업을 정리하고 그 환경으로 되돌립니다. 가상 장치가 죽은 채 가상 환경이 남아 있으면
   셋업 화면이 '다시 켜기 / 전에 쓰던 환경으로' 를 보여 줍니다.
-- 포트는 `openmimic_sim/<side>_<role>` 링크라 껐다 켜도 경로가 같고, 캘리브 id 는 `sim_follower` 처럼 따로 둬 실제 팔 파일과 섞이지 않습니다.
+- 포트는 `sim://<side>_<role>` 이라 껐다 켜도 이름이 같고, 캘리브 id 는 `sim_follower` 처럼 따로 둬 실제 팔 파일과 섞이지 않습니다.
+- **가상 시리얼** (`openmimic_fakeserial`): 보드 레지스터(캘리브레이션 값·토크)와 MuJoCo 장면은 서버·수집 worker·롤아웃이 함께 봐야 하므로
+  가상 팔 도구 프로세스 하나에 둡니다. 각 프로세스는 `install()` 로 `serial.Serial` 자리에 생성 함수를 두어, `sim://` 포트일 때만
+  `FakeSerial` 이 `127.0.0.1` 의 가상 팔 도구에 접속합니다 (`OMSIM1 <토큰> <보드>` 인사 뒤로는 시리얼과 같은 바이트 스트림, 연결마다 따로 응답).
+  scservo_sdk · dynamixel_sdk 가 `serial.Serial(...)` 을 그 자리에서 만들기 때문에 lerobot 코드는 그대로입니다. PTY·com0com 같은 OS 기능이 없어
+  Linux · Windows 가 같은 경로를 탑니다. 예전 PTY 판과 같은 시험(가상 장치 전 구성)을 모두 통과합니다.
+- 가상 팔 도구는 보드 잠금 안에서 레지스터만 읽고 MuJoCo 호출(월드 잠금)은 그 밖에서 합니다. 두 잠금을 겹쳐 잡으면 에피소드 사이 시연 계획(이 서버에서 약 80 ms)
+  동안 시리얼 응답이 멈춰, lerobot 이 응답 제한 시간(약 35 ms)을 넘겨 `There is no status packet` 으로 수집이 끊겼습니다 (예전 PTY 판에서도 재현).
+- 명령 파일(`openmimic_sim/cmd`, 수집 worker 의 `cmd`)은 이름을 바꾼 뒤 읽고 지웁니다(`P.take_file`) — Windows 는 쓰는 쪽이 연 파일을 지울 수 없어
+  '읽고 → 지우기' 면 같은 명령이 다시 실행됩니다.
 - 화면 아래 막대 → `POST /api/sim/cmd` → `openmimic_sim/cmd` 에 한 줄씩 (`w <보드>` 쓸기, `a on|off` 리더 자동, `v <보드> <V>`, `t <보드> <°C>`).
   전압·온도 명령은 서보 상태 감시를 시험하는 용도입니다.
 - 가상 카메라(`openmimic_simcam`)는 `openmimic_sim/cam_<이름>` 경로를 연 쪽에서 합성 영상을 만듭니다 (서버·수집 worker 는 `main.py` import 때,
@@ -515,14 +525,14 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 ### 물리 시뮬레이션 (MuJoCo)
 
 `openmimic_mujoco.py`. SO-ARM101 한팔이고 `mujoco` 가 있으면 `tools_simarms.py --physics auto` 가 팔로워 서보의 '몸' 을
-MuJoCo 로 바꿉니다. 서보 프로토콜(PTY)은 그대로라 OpenMimic·lerobot 쪽 코드는 실제 팔과 같은 경로를 탑니다.
+MuJoCo 로 바꿉니다. 서보 프로토콜(가상 시리얼 `sim://`)은 그대로라 OpenMimic·lerobot 쪽 코드는 실제 팔과 같은 경로를 탑니다.
 
 - **모델**: `urdf/so101_new_calib.xml` (TheRobotStudio SO-ARM100 의 MJCF, Apache 2.0 — `meshdir` 만 `urdf/` 로).
   책상·물체·목표·카메라는 `MjSpec` 으로 불러올 때 붙입니다. 그리퍼·턱 말고는 충돌을 꺼서 계산량을 줄였습니다.
 - **틱 ↔ 관절각**: `rad = (틱 − 2048) × 2π / 4096`. 팔로워 목표(Goal_Position + Homing)가 위치 액추에이터 명령(STS3215 값:
   kp 998, 힘 제한 ±2.94 N·m — MJCF 원본), 관절각이 엔코더 값(Present_Position)이 됩니다. 토크가 꺼진 관절은 지금 자세를 유지하고,
   마법사 '움직이기' 는 관절을 바로 놓습니다(텔레포트). 쓸기 범위는 MJCF 관절 범위라 리더·팔로워 캘리브레이션 범위가 같아집니다.
-- **렌더**: 별도 스레드가 top · wrist 를 그려 `/dev/shm/openmimic_sim/cam_<이름>.rgb`(머리 16 B + RGB)에 쓰고,
+- **렌더**: 별도 스레드가 top · wrist 를 그려 `frame_dir()/cam_<이름>.rgb`(Linux `/dev/shm/openmimic_sim`, Windows 임시 폴더 · 머리 16 B + RGB)에 쓰고,
   `openmimic_simcam` 이 그 파일을 읽어 카메라로 내줍니다. 백엔드는 별도 프로세스로 시험해 하드웨어 EGL → OSMesa 순으로 고릅니다
   (MuJoCo 는 import 할 때 백엔드를 정함, 소프트웨어 EGL 은 OSMesa 보다 느림). 이 개발 서버(CPU 전용)는 OSMesa 로 320×240 한 장 약 80 ms.
 - **그립 보조**: 턱 충돌 모양이 메시의 볼록 껍질이라 마찰만으로는 큐브가 밀려납니다. 그리퍼가 닫히는 중이고 큐브 중심이
@@ -595,7 +605,7 @@ Intel NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다. 
 
 하드웨어 없이 다음으로 검증했습니다 (스크립트는 레포에 넣지 않았습니다):
 
-- STS3215 / Dynamixel X(Protocol 2.0) **PTY 에뮬레이터** + 실제 lerobot 버스 — 진단, 캘리브레이션(범위·공장값·가져오기),
+- STS3215 / Dynamixel X(Protocol 2.0) **에뮬레이터**(처음엔 PTY, 지금은 `sim://` 가상 시리얼) + 실제 lerobot 버스 — 진단, 캘리브레이션(범위·공장값·가져오기),
   확인 단계, Control 연결 순서·E-STOP·과부하 모터, 포트 감시, 모터 ID 세팅, 양팔 OMX 플러그인
 - lerobot API 스텁 — Collect 상태 기계, 양팔 녹화 worker, 강제 종료, 환경·프로젝트
 - 헤드리스 Chromium — SO 한팔·양팔, OMX 한팔·양팔 네 구성에서 전 페이지 JS 오류 0

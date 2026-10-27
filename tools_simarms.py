@@ -5,11 +5,14 @@
     python tools_simarms.py --robot omx   --mode single       # OMX 한팔 (보드 2개)
 
 켜 두는 동안 OpenMimic 의 포트 목록에 '가상 …' 보드로 나타나고, 끄면 사라집니다 (OpenMimic 재시작 불필요).
-실제 팔과는 아무 관계가 없습니다 — 실제 팔을 쓸 때는 이 도구를 켜지 않으면 됩니다.
+실제 팔과는 아무 관계가 없습니다 — 실제 팔을 쓸 때는 이 도구를 켜지 않으면 됩니다. Linux · Windows 공통.
 
 동작
   - 모터는 실제 프로토콜을 그대로 말합니다: SO-ARM101 = Feetech STS3215, OMX = Dynamixel X (Protocol 2.0).
     lerobot 버스가 진짜 서보와 통신하듯 ping·read·write·sync read/write 를 주고받습니다.
+  - 포트 이름은 sim://<side>_<role> (예: sim://main_follower) 입니다. 껐다 켜도 같은 이름이라 다시 지정할 필요가 없습니다.
+    OpenMimic 쪽 프로세스는 openmimic_fakeserial 이 serial.Serial 대신 이 도구의 보드에 127.0.0.1 소켓으로 붙습니다
+    (보드·물리 상태는 이 프로세스 하나에 있어 서버·수집/실행 worker 가 같은 팔을 봅니다). PTY·드라이버가 필요 없습니다.
   - 모터 ID·모델은 lerobot 정의 그대로 (SO: ID 1~6, OMX 팔로워 11~16 / 리더 1~6).
   - 처음에는 공장 상태(캘리브레이션 없음)입니다. 전압은 팔로워 12 V, 리더 5 V (SO) 로 보고합니다.
   - Homing_Offset 을 실제처럼 반영합니다 (Feetech: Present = Actual - Homing, Dynamixel: Present = Actual + Homing).
@@ -28,8 +31,6 @@
         demo new 큐브를 새 위치에 놓고 시연
         reset    큐브만 새 위치에 다시 놓기
   - 모터 ID 세팅(보드레이트·ID 변경)은 흉내내지 않습니다.
-
-포트 경로는 레포 안의 openmimic_sim/<이름> 심볼릭 링크로 고정됩니다 — 껐다 켜도 같은 경로라 다시 지정할 필요가 없습니다.
 """
 from __future__ import annotations
 
@@ -37,23 +38,23 @@ import argparse
 import json
 import math
 import os
-import pty
-import select
-import signal
+import queue
 import sys
 import threading
 import time
-import tty
 from pathlib import Path
 
 import numpy as np
 
 import openmimic_platform as P
+from openmimic_fakeserial import PREFIX, SimPortServer
 
 ROOT = Path(__file__).resolve().parent
 SIM_DIR = ROOT / "openmimic_sim"
 SIM_FILE = ROOT / "openmimic_sim.json"
 JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
+
+
 
 
 # ============================================================================ Feetech (STS3215)
@@ -303,7 +304,7 @@ class DxlBoard:
         return pkts, buf
 
 
-# ============================================================================ 보드 = PTY 하나
+# ============================================================================ 보드 = 가상 포트 하나 (sim://<이름>)
 OMX_SPEC = {
     "follower": [(11, "xl430-w250"), (12, "xl430-w250"), (13, "xl430-w250"),
                  (14, "xl330-m288"), (15, "xl330-m288"), (16, "xl330-m288")],
@@ -321,32 +322,24 @@ class SimArm:
             self.board = FeetechBoard(range(1, 7), volt)
         else:
             self.board = DxlBoard(OMX_SPEC[role], volt)
-        self.master, slave = pty.openpty()
-        tty.setraw(self.master)
-        tty.setraw(slave)
-        self._slave = slave                   # 열어 두어야 OpenMimic 이 닫아도 PTY 가 유지됩니다
-        self.dev = os.ttyname(slave)
-        self.link = SIM_DIR / self.name
+        self.port = PREFIX + self.name            # 설정에 저장되는 포트 이름 — 껐다 켜도 같음
         self.wiggle_until = 0.0
         self.wiggle_t0 = 0.0
-        self.lock = threading.Lock()
-        self.world = None                     # 물리 시뮬레이션이면 팔로워의 몸 (openmimic_mujoco.World)
-        self.ranges = None                    # (lo, hi) 틱 — 쓸기 범위. 없으면 2048 ± 900
-        self.demo = None                      # (경유점, 시작 시각) — 리더 자동 시연
-        threading.Thread(target=self._io, daemon=True).start()
+        self.lock = threading.Lock()              # 보드 레지스터 — 시리얼 응답과 서보 갱신이 함께 씀
+        self.world = None                         # 물리 시뮬레이션이면 팔로워의 몸 (openmimic_mujoco.World)
+        self.ranges = None                        # (lo, hi) 틱 — 쓸기 범위. 없으면 2048 ± 900
+        self.demo = None                          # (경유점, 시작 시각) — 리더 자동 시연
 
-    def _io(self):
-        buf = b""
-        while True:
-            try:
-                buf += os.read(self.master, 1024)
-            except OSError:
-                return
-            pkts, buf = self.board.split(buf)
-            for pkt in pkts:
-                with self.lock:
-                    for rep in self.board.handle(pkt):
-                        os.write(self.master, rep)
+    def serve(self, buf):
+        """가상 포트로 들어온 바이트(buf, 연결마다 따로)에서 완성된 패킷을 꺼내 응답들을 돌려줍니다.
+        보드 잠금만 잡습니다 — 물리 계산·렌더를 기다리지 않아야 lerobot 의 응답 제한 시간(수십 ms) 안에 답합니다."""
+        pkts, rest = self.board.split(bytes(buf))
+        del buf[:len(buf) - len(rest)]
+        out = []
+        for pkt in pkts:
+            with self.lock:
+                out.extend(self.board.handle(pkt))
+        return out
 
     def _wig(self, k, ph):
         if self.ranges is None:
@@ -355,25 +348,30 @@ class SimArm:
         return (lo + hi) / 2 + (hi - lo) / 2 * math.sin(2 * math.pi * ph)
 
     def tick(self, now, dt, auto):
-        with self.lock:
-            servos = list(self.board.servos.values())
-            wig = now < self.wiggle_until
-            ph = (now - self.wiggle_t0) / max(1e-6, self.wiggle_until - self.wiggle_t0)
-            if self.world is not None:
-                # 물리: 토크가 모두 꺼져 있으면 '손으로' 움직인 것처럼 관절을 놓고, 아니면 목표를 액추에이터로
+        wig = now < self.wiggle_until
+        ph = (now - self.wiggle_t0) / max(1e-6, self.wiggle_until - self.wiggle_t0)
+        if self.world is not None:
+            # 물리: 토크가 모두 꺼져 있으면 '손으로' 움직인 것처럼 관절을 놓고, 아니면 목표를 액추에이터로.
+            # 보드 잠금 안에서는 레지스터만 읽고, MuJoCo 호출(월드 잠금)은 보드 잠금 밖에서 합니다 —
+            # 겹쳐 잡으면 시연 계획·렌더 동안 시리얼 응답이 멈춰 lerobot 이 'no status packet' 으로 끊깁니다.
+            with self.lock:
+                servos = list(self.board.servos.values())
                 torque = [bool(s.mem[40]) for s in servos]
-                if wig and not any(torque):
-                    self.world.teleport([self._wig(k, ph) for k in range(len(servos))])
-                self.world.set_targets([s.goal_actual for s in servos], torque)
-                return
-            demo_q = None
-            if self.demo is not None:
-                pts, t0 = self.demo
-                if now - t0 > pts[-1][0]:
-                    self.demo = None
-                import openmimic_mujoco as om
-                demo_q = om.tick_from_rad(om.interp(pts, now - t0), self.robot)
-            for k, s in enumerate(servos):
+                goals = [s.goal_actual for s in servos]
+                tele = [self._wig(k, ph) for k in range(len(servos))] if wig and not any(torque) else None
+            if tele is not None:
+                self.world.teleport(tele)
+            self.world.set_targets(goals, torque)
+            return
+        demo_q = None
+        if self.demo is not None:
+            pts, t0 = self.demo
+            if now - t0 > pts[-1][0]:
+                self.demo = None
+            import openmimic_mujoco as om
+            demo_q = om.tick_from_rad(om.interp(pts, now - t0), self.robot)
+        with self.lock:
+            for k, s in enumerate(self.board.servos.values()):
                 torque = s.mem[40] if isinstance(s, FeetechServo) else s.mem[64]
                 if not torque:
                     if wig:                                # '손으로' 양 끝까지 쓸기
@@ -444,11 +442,14 @@ def main(argv=None):
     sides = ["main"] if a.mode == "single" else ["left", "right"]
     SIM_DIR.mkdir(exist_ok=True)
     for f in SIM_DIR.iterdir():
+        # 옛 판(PTY 심볼릭 링크)이 남긴 것·가상 카메라 경로·명령 파일
         if f.is_symlink() or f.name.startswith("cam_") or f.name == "cmd":
-            f.unlink()
+            try:
+                f.unlink()
+            except OSError:
+                pass
     arms = [SimArm(a.robot, s, r) for s in sides for r in ("follower", "leader")]
-    for arm in arms:
-        os.symlink(arm.dev, arm.link)
+    server = SimPortServer({arm.name: arm.serve for arm in arms})
     if world is not None:
         rng = world.ranges_ticks(margin=0.005)       # 리더·팔로워 쓸기 범위를 같게 → 캘리브레이션 범위가 같아짐
         for arm in arms:
@@ -465,19 +466,22 @@ def main(argv=None):
         cams.append({"name": n, "path": str(f)})
     label = {"so101": "SO-ARM101", "omx": "OMX"}[a.robot]
     state = {"auto": a.auto, "volt": {}, "temp": {}}
+    state_lock = threading.Lock()
 
     def write_state():
-        tmp = SIM_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps({
-            "pid": os.getpid(), "robot": a.robot, "mode": a.mode, "auto": state["auto"],
-            "ports": [{"path": str(arm.link), "dev": arm.dev, "name": arm.name, "side": arm.side, "role": arm.role,
-                       "label": f"가상 {label} {arm.side} {'팔로워' if arm.role == 'follower' else '리더'}",
-                       "volt": state["volt"].get(arm.name), "temp": state["temp"].get(arm.name)}
-                      for arm in arms],
-            "cams": cams, "physics": "mujoco" if world is not None else "",
-            "task": dict(world.state(), demo=demo_left()) if world is not None else None},
-            ensure_ascii=False, indent=1))
-        os.replace(tmp, SIM_FILE)
+        with state_lock:
+            tmp = SIM_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps({
+                "pid": os.getpid(), "robot": a.robot, "mode": a.mode, "auto": state["auto"],
+                "endpoint": server.endpoint(),
+                "ports": [{"path": arm.port, "dev": arm.port, "name": arm.name, "side": arm.side, "role": arm.role,
+                           "label": f"가상 {label} {arm.side} {'팔로워' if arm.role == 'follower' else '리더'}",
+                           "volt": state["volt"].get(arm.name), "temp": state["temp"].get(arm.name)}
+                          for arm in arms],
+                "cams": cams, "physics": "mujoco" if world is not None else "",
+                "task": dict(world.state(), demo=demo_left()) if world is not None else None},
+                ensure_ascii=False, indent=1))
+            os.replace(tmp, SIM_FILE)
 
     def demo_left():
         ld = next((x for x in arms if x.role == "leader"), None)
@@ -493,11 +497,7 @@ def main(argv=None):
             SIM_FILE.unlink()
         except OSError:
             pass
-        for arm in arms:
-            try:
-                arm.link.unlink()
-            except OSError:
-                pass
+        server.close()
         for c in cams:
             try:
                 os.unlink(c["path"])
@@ -507,8 +507,7 @@ def main(argv=None):
             world.close()
         os._exit(0)
 
-    signal.signal(signal.SIGINT, cleanup)
-    signal.signal(signal.SIGTERM, cleanup)
+    P.install_stop_handlers(cleanup)         # SIGINT · SIGTERM · (Windows) CTRL_BREAK
 
     def loop():
         last = time.monotonic()
@@ -552,7 +551,8 @@ def main(argv=None):
     def show():
         print(f"\n가상 {label} {'양팔' if a.mode == 'bimanual' else '한팔'} — OpenMimic 포트 목록에 '가상 …' 으로 나타납니다")
         for i, arm in enumerate(arms, 1):
-            print(f"  {i}. {arm.name:16s} {arm.link}  (→ {arm.dev})")
+            print(f"  {i}. {arm.name:16s} {arm.port}")
+        print(f"  (보드 연결: 127.0.0.1:{server.port})")
         print("명령: w <번호> 쓸기 · a 리더 자동 움직임 " + ("[켜짐]" if state["auto"] else "[꺼짐]")
               + " · v <번호> <V> 전압 · t <번호> <°C> 온도 · l 목록 · q 끝", flush=True)
 
@@ -608,24 +608,25 @@ def main(argv=None):
         write_state()
 
     show()
-    interactive = sys.stdin.isatty()
+    # 터미널에서 직접 띄웠으면 키보드 명령도 받습니다 — 별도 스레드가 한 줄씩 넘김 (select 는 Windows 콘솔에 못 씀)
+    typed = queue.Queue()
+    if sys.stdin is not None and sys.stdin.isatty():
+        def read_stdin():
+            for line in sys.stdin:
+                typed.put(line)
+        threading.Thread(target=read_stdin, daemon=True).start()
     cmd_file = SIM_DIR / "cmd"
     while True:
         # 화면(OpenMimic)이 보내는 명령 — 한 줄에 하나
         try:
-            if cmd_file.exists():
-                lines = cmd_file.read_text().splitlines()
-                cmd_file.unlink()
-                for line in lines:
-                    run(line.strip().split())
+            for line in (P.take_file(cmd_file) or "").splitlines():
+                run(line.strip().split())
         except OSError:
             pass
-        if not interactive:
-            time.sleep(0.2)
-            continue
-        r, _, _ = select.select([sys.stdin], [], [], 0.2)
-        if r:
-            run(sys.stdin.readline().strip().split())
+        try:
+            run(typed.get(timeout=0.2).strip().split())
+        except queue.Empty:
+            pass
 
 
 if __name__ == "__main__":

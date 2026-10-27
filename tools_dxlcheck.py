@@ -235,6 +235,8 @@ def run(io, *, role=None):
 
 
 def main(argv=None):
+    import openmimic_fakeserial
+    openmimic_fakeserial.install()          # --port sim://… 면 가상 팔 도구의 보드
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", required=True)
     ap.add_argument("--role", choices=("follower", "leader"), default="follower")

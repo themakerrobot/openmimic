@@ -44,12 +44,14 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
+import openmimic_fakeserial  # 가상 팔 포트(sim://…) — 실제 포트는 그대로 pyserial
 import openmimic_health  # 시작 전 전원 점검 · 실행 중 서보 온도/전압 감시
 import openmimic_ov  # OpenVINO 변환·롤아웃. openvino 자체는 필요할 때 별도 프로세스에서만 import 합니다
 import openmimic_platform as P  # Linux/Windows 차이 (포트·카메라·작업 프로세스·공유 폴더)
 import openmimic_simcam  # 가상 카메라 (openmimic_sim/cam_<이름>) — 실제 카메라 경로는 그대로
 
 openmimic_simcam.install()
+openmimic_fakeserial.install()
 
 # ------------------------------- 경로 ---------------------------------------
 HOME = Path.home()
@@ -1869,22 +1871,20 @@ SIM_DIR = Path(__file__).resolve().parent / "openmimic_sim"
 
 
 def serial_path_ok(p):
-    """포트 문자열 검사 — 플랫폼별 실제 포트 모양 또는 가상 팔(tools_simarms) 의 openmimic_sim/<이름> 링크."""
-    return isinstance(p, str) and (P.serial_port_ok(p) or p.startswith(str(SIM_DIR) + os.sep))
+    """포트 문자열 검사 — 플랫폼별 실제 포트 모양 또는 가상 팔(tools_simarms) 의 sim://<이름>."""
+    return isinstance(p, str) and P.serial_port_ok(p)
 
 
 def port_present(port):
-    """지정한 포트가 지금 연결돼 있는지 (Windows 는 by-id·USB 위치로 COM 을 찾을 수 있는지)."""
+    """지정한 포트가 지금 연결돼 있는지 (Windows 는 by-id·USB 위치로 COM 을 찾을 수 있는지, 가상 팔은 켜져 있는지)."""
+    if P.is_sim_port(port):
+        return openmimic_fakeserial.sim_port_alive(port)
     return P.port_exists(port)
 
 
 def _sim_ports():
-    """가상 팔 도구가 켜져 있으면 그 보드들. 꺼져 있거나 죽었으면 빈 목록."""
-    d = load_json(SIM_FILE, {})
-    pid = d.get("pid") if isinstance(d, dict) else None
-    if not pid or not P.pid_exists(pid):
-        return []
-    return [p for p in d.get("ports", []) if os.path.exists(p.get("path", ""))]
+    """가상 팔 도구가 켜져 있으면 그 보드들 (sim://<이름>). 꺼져 있거나 죽었으면 빈 목록."""
+    return [p for p in openmimic_fakeserial.sim_info().get("ports", []) if P.is_sim_port(p.get("path"))]
 
 
 # ----------------------------- 가상 장치 (팔·카메라 없이 해 보기) -------------------
@@ -1959,7 +1959,7 @@ def sim_start(robot, mode, physics=True):
                     cwd=str(SIM_PY.parent), spec={"robot": robot, "mode": mode})
     pid = load_json(JOB_DIR / f"{jid}.json", {}).get("pid")
     st = {}
-    for _ in range(150):                   # 가상 보드(PTY)와 상태 파일이 생길 때까지 (물리 시뮬레이션이면 몇 초)
+    for _ in range(150):                   # 가상 보드(sim:// 소켓)와 상태 파일이 생길 때까지 (물리 시뮬레이션이면 몇 초)
         st = sim_state()
         if st.get("on") and st.get("pid") == pid and st.get("ports"):
             break
@@ -2132,9 +2132,9 @@ def list_serial_ports():
                       or os.path.basename(dev)),
             "used_by": used.get(dev, []),
         })
-    # 가상 팔 — 경로가 고정된 openmimic_sim/<이름> 링크를 by_path 로 둬서 지정한 포트가 재시작해도 유지됩니다
+    # 가상 팔 — 이름이 고정된 sim://<이름> 을 by_path 로 둬서 지정한 포트가 재시작해도 유지됩니다
     for sp in _sim_ports():
-        dev = os.path.realpath(sp["path"])
+        dev = sp["path"]
         out.append({"dev": dev, "by_id": "", "by_path": sp["path"],
                     "usb": {"product": sp.get("label", "가상 팔"), "serial": ""},
                     "label": sp.get("label", "가상 팔"), "sim": True,
@@ -9886,12 +9886,10 @@ def worker_record(jid):
         f = rd / "cmd"
         while alive["on"]:
             try:
-                if f.exists():
-                    txt = f.read_text()
-                    f.unlink()
-                    for ch in txt:
-                        on_key(ch)
-                        print(f"[openmimic-worker] key {ch}", flush=True)
+                txt = P.take_file(f)
+                for ch in txt or "":
+                    on_key(ch)
+                    print(f"[openmimic-worker] key {ch}", flush=True)
             except OSError:
                 pass
             time.sleep(0.05)

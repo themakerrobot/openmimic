@@ -226,8 +226,10 @@ def main(argv=None):
     if not argv or argv[0] in ("-h", "--help"):
         print(__doc__)
         return 0
+    import openmimic_fakeserial
     import openmimic_simcam
     openmimic_simcam.install()          # 가상 카메라 경로(openmimic_sim/cam_*)면 합성 영상
+    openmimic_fakeserial.install()      # 가상 팔 포트(sim://…)면 가상 팔 도구의 보드로
     P.forward_break_to_sigint()         # Windows 작업 탭 '중지'(CTRL_BREAK) = SIGINT 와 같은 정리 경로
     lw, rest = _pop_opts(argv, "--openmimic.")
     ov_opts, rest = _pop_opts(rest, "--ov.")

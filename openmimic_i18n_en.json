@@ -1523,7 +1523,7 @@
 "자동 시연": "Auto demo",
 "큐브 다시 놓기": "Place the cube again",
 "큐브를 새로 놓고 리더가 큐브를 집어 초록 칸에 놓는": "Places the cube anew and the leader performs a pick-and-place-in-the-green-square",
-"포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치)여야 합니다": "Port must be a COM port or a USB identifier (usb-… · USB location)",
+"포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치, 가상 팔은 sim://…)여야 합니다": " port must be a COM port or a USB identifier (usb-… · USB location, sim://… for a virtual arm)",
 "다른 프로그램이 잡고 있거나 COM 포트 드라이버 문제 (장치 관리자 확인)": "Another program is holding it, or a COM port driver problem (check Device Manager)",
 "포트를 열 권한이 없습니다 — 다른 프로그램(시리얼 모니터 등)이 COM 포트를 잡고 있는지 확인하세요.": "No permission to open the port — check whether another program (a serial monitor etc.) is holding the COM port.",
 "시리얼 포트가 없습니다 — USB 와 장치 관리자의 COM 포트·드라이버를 확인하세요": "No serial ports — check USB and the COM port · driver in Device Manager",
@@ -1532,5 +1532,6 @@
 "USB 위치(": "the USB location (e.g.",
 "같은 값)를 씁니다 —": ") is used —",
 "COM 번호(COM5 등)는 꽂을 때마다 바뀔 수 있어 저장하지 않습니다.": "The COM number (COM5 etc.) can change every time you plug in, so it is not saved.",
-"경로는 dshow: 로 시작하는 장치 경로여야 합니다": "path must be a device path starting with dshow:"
+"경로는 dshow: 로 시작하는 장치 경로여야 합니다": "path must be a device path starting with dshow:",
+"포트는 /dev/… (또는 가상 팔 sim://…) 경로여야 합니다": " port must be a /dev/… path (or a virtual arm sim://…)"
 }
