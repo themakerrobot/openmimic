@@ -44,6 +44,7 @@
 | `tools_simarms.py` | 가상 팔 — PTY 위에서 STS3215 / Dynamixel X 를 흉내. 켜 있으면 `openmimic_sim.json` 에 포트·가상 카메라를 알리고 OpenMimic 포트 목록에 추가됨. 셋업 화면의 '가상 장치 켜기' 가 작업으로 띄움 |
 | `openmimic_simcam.py` | 가상 카메라 — `openmimic_sim/cam_<이름>` 경로면 합성 영상, 아니면 원래 `cv2.VideoCapture` |
 | `openmimic_health.py` | 서보 상태 감시 — 시작 전 전원 점검(`power_check` 계열)과 실행 중 온도·전압·보호 플래그 감시(`HealthGuard`) |
+| `openmimic_platform.py` | Linux / Windows 차이를 모은 곳 — 시리얼 포트·카메라 나열과 식별자 해석, 작업 프로세스 띄우기·중지·생존 확인, 공유 폴더, MuJoCo 렌더 백엔드, OS 별 안내 문구 |
 | `plugins/lerobot_robot_bi_omx/` | 양팔 OMX 팔로워 `bi_omx_follower` (lerobot 플러그인) |
 | `plugins/lerobot_teleoperator_bi_omx/` | 양팔 OMX 리더 `bi_omx_leader` |
 | `plugins/lerobot_policy_act2/` | ACT2 정책 `act2` — lerobot ACT 블록을 import 하고 증강·청크 보간·DINOv2 백본·flow 헤드를 설정으로 붙임 |
@@ -137,6 +138,27 @@
 
 리더/팔로워는 *포트 감시* 로 구분합니다 — 모든 포트를 토크 OFF 로 열고 엔코더를 읽어, 손으로 움직인 팔의 포트를 찾습니다.
 OMX 는 리더(ID 1~6)·팔로워(ID 11~16) 모터 구성이 달라서 두 구성을 차례로 시험합니다.
+
+## 플랫폼 분기 (`openmimic_platform.py`)
+
+OS 에 따라 다른 코드는 이 모듈에만 둡니다. 다른 파일은 `os.name` · `sys.platform` 을 보지 않고 `P.<함수>` 를 부릅니다.
+Linux 쪽은 원래 `main.py` 등에 있던 코드를 그대로 옮겼습니다.
+
+| 기능 | Linux | Windows |
+|---|---|---|
+| 포트 나열 `list_serial_ports` | `/dev/ttyACM*` · `/dev/ttyUSB*` + `/dev/serial/by-id`·`by-path` 역매핑, USB 정보는 sysfs | pyserial `comports()` — `by_id = usb-<vid>_<pid>_<시리얼>`(시리얼 번호가 있을 때), `by_path` = USB 위치(`1-3.2`) |
+| 저장된 포트 → 열 포트 `resolve_serial_port` | 그대로 (심볼릭 링크를 pyserial 이 따라감) | by-id → USB 위치 → COM 순서로 지금 연결된 COM 이름을 찾음. 없으면 `PortNotFound` |
+| 같은 장치 비교 `port_key` | `realpath` | 해석한 COM 이름 |
+| 카메라 `list_cameras` · `resolve_camera` | lerobot `find_cameras` + `/dev/v4l/by-id`·`by-path`, 값은 그대로 | DirectShow 장치 순서 = OpenCV `CAP_DSHOW` 인덱스. 안정 식별자는 `dshow:<장치 경로>`(pygrabber, 없으면 ffmpeg 목록), 열 때 인덱스 + `CAP_DSHOW` 로 바꿈 |
+| 작업 띄우기·중지 `spawn_job` · `stop_job` | 새 세션 · 프로세스 그룹에 SIGINT / SIGKILL | 새 프로세스 그룹 · `CTRL_BREAK` / `taskkill /T /F` |
+| 생존 확인 `job_alive` · `pid_exists` | `waitpid`·`kill(pid, 0)`·`/proc` 좀비 판정 | psutil (Windows 의 `os.kill(pid, 0)` 은 확인이 아니라 **종료**라 쓰면 안 됨) |
+| 중지 처리기 `install_stop_handlers` · `forward_break_to_sigint` | SIGINT·SIGTERM | + SIGBREAK. lerobot 롤아웃은 SIGINT 처리기만 달기 때문에 CTRL_BREAK 를 그 처리기로 넘겨 시작 자세 복귀·토크 해제를 탑니다 |
+| 공유 폴더 `shm_dir` · `frame_dir` | `/dev/shm` (없으면 레포 폴더) | 레포 폴더 · 임시 폴더 |
+| MuJoCo 렌더 `setup_mujoco_gl` | 하드웨어 EGL → OSMesa | `wgl` 하나만 시험, 안 되면 물리 시뮬레이션 없이 가상 장치를 켬 |
+| 안내 문구 `TEXT` | dialout · `/dev/serial/by-id` | 장치 관리자 · COM · USB 위치 |
+
+설정 파일에는 계속 by-id 우선, 없으면 by-path(USB 위치)를 저장합니다. Windows 의 `COM5` 같은 이름은 꽂을 때마다 바뀔 수 있어 저장하지 않고,
+lerobot 에 넘기기 직전(`make_arm` · CLI 인자 · 점검 도구)에만 해석합니다.
 
 ## 셋업 마법사 내부
 
