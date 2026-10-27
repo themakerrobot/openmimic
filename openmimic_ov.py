@@ -30,6 +30,8 @@ import sys
 import time
 from pathlib import Path
 
+import openmimic_platform as P
+
 OV_SUBDIR = "openvino"
 META = "ov_meta.json"
 DEVICE_ORDER = ("NPU", "GPU", "CPU")
@@ -395,7 +397,7 @@ class OVEngine:
         cands = pick_devices(core.available_devices, device)
         if device not in {_family(d) for d in core.available_devices}:
             say(f"[ov] !! {device} 장치가 없습니다 (있음: {', '.join(core.available_devices) or '없음'}) — "
-                "NPU 는 /dev/accel/accel0·드라이버, GPU 는 compute-runtime 설치를 확인하세요")
+                f"{P.TEXT['ov_driver']}")
         if not cands:
             raise SystemExit(f"OpenVINO 장치를 찾을 수 없습니다 (요청: {device}, 있음: {core.available_devices})")
         self.compiled = None

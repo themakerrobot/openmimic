@@ -1533,5 +1533,10 @@
 "같은 값)를 씁니다 —": ") is used —",
 "COM 번호(COM5 등)는 꽂을 때마다 바뀔 수 있어 저장하지 않습니다.": "The COM number (COM5 etc.) can change every time you plug in, so it is not saved.",
 "경로는 dshow: 로 시작하는 장치 경로여야 합니다": "path must be a device path starting with dshow:",
-"포트는 /dev/… (또는 가상 팔 sim://…) 경로여야 합니다": " port must be a /dev/… path (or a virtual arm sim://…)"
+"포트는 /dev/… (또는 가상 팔 sim://…) 경로여야 합니다": " port must be a /dev/… path (or a virtual arm sim://…)",
+"기기 플랫폼": "Device platform",
+"activate.ps1 없이 실행한 것 같습니다. OpenMimic 을 끄고 openmimic.ps1 start 로 다시 실행하세요": "it looks like OpenMimic was started without activate.ps1. Stop OpenMimic and start it again with openmimic.ps1 start",
+"install.ps1 로 설치하거나": "install with install.ps1, or",
+"install.ps1 을 다시 돌려도 됩니다": "re-running install.ps1 also works",
+"NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요": "For NPU check the neural processor (Intel AI Boost) driver in Device Manager; for GPU check the Intel graphics driver"
 }

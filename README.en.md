@@ -73,7 +73,20 @@ When the install finishes, **log out and log back in once** (serial and camera p
 Open the address printed by `start` (**`http://<PC IP>:8080`**) in a browser. The **setup wizard** opens the first time;
 after that, follow the **Getting started** guide above the dataset list (Setup → Calibration → Collect → Training → Rollout).
 
-- The device type (Intel / Thor / NVIDIA) is detected automatically. Ubuntu 22.04 · 24.04 · 26.04
+### Windows 10 / 11 (preview — not yet verified on real hardware)
+
+In PowerShell (if git is missing, first `winget install --id Git.Git -e`):
+
+```powershell
+git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic; cd $HOME\project\openmimic
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # until "=== 완료 ===" (done) appears
+powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
+```
+
+`openmimic.ps1` takes the same commands as `openmimic.sh` (`start · stop · restart · status · log · update · autostart on|off`).
+If a Windows Firewall prompt appears the first time, choose **Allow** so other PCs and tablets can connect.
+
+- The device type (Intel / Thor / NVIDIA) is detected automatically. Ubuntu 22.04 · 24.04 · 26.04, Windows 10 · 11
 - **Other users' environments are left alone** — conda is installed but `~/.bashrc` is not touched, and every package goes into the `openmimic` virtual environment
 - Updates, platforms and more: **[docs/INSTALL.md](docs/INSTALL.md)** (Korean)
 
@@ -291,7 +304,8 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 
 | Symptom | Check |
 |---|---|
-| No port shown | Replug USB; did you log in again after installing (`dialout` in `groups`) |
+| No port shown | Replug USB; did you log in again after installing (`dialout` in `groups`). On Windows, check that it appears under **Ports (COM & LPT)** in Device Manager and the driver (CH340/CH343 · CP210x) |
+| Arms or cameras swap after a reboot (Windows) | Boards and cameras without a serial number follow the **USB socket** they are plugged into — always use the same socket. If cameras only show up by number, `pip install pygrabber` |
 | "No calibration file" | Setup wizard step ③ or the Calibration tab. For a file from another PC, Calibration → Import |
 | No 3D view | 3D is loaded from the internet (CDN). Without internet only the 3D box is missing; the rest works |
 | Several cameras drop out | Setup → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
@@ -300,7 +314,7 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |
 | "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make the setup match training |
 | Screen looks wrong after an update | `./openmimic.sh restart` + hard refresh in the browser (Ctrl+Shift+R) |
-| "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` |
+| "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` (on Windows `openmimic.ps1 start`) |
 | "Power check failed — not started" | The leader and follower adapters are swapped or the voltage is outside the servo limit. **Disconnect power first** and check the adapter labels |
 | "Stopped automatically due to a servo fault" | For overheating, let it cool and look for jams or overload; for a voltage drop, check the adapter current rating and connectors |
 

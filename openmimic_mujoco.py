@@ -411,6 +411,7 @@ class World:
         path = FRAME_DIR / f"cam_{name}.rgb"
         if f is None or f["shape"] != (h, w):
             size = 16 + h * w * 3
+            # TODO(win-verify): 쓰는 쪽·읽는 쪽 memmap 동시 사용
             # 크기가 같은 파일이 이미 있으면 그대로 다시 씁니다 — Windows 는 다른 프로세스(가상 카메라)가
             # 매핑 중인 파일을 잘라내거나 지울 수 없습니다 (Linux 는 시작 때 옛 프레임을 지워 두므로 항상 새 파일)
             if not (path.is_file() and path.stat().st_size == size):

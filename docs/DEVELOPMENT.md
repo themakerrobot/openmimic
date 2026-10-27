@@ -53,6 +53,8 @@
 | `urdf/` | 3D 용 URDF·STL — SO-101 (TheRobotStudio), OMX-F (ROBOTIS) |
 | `lerobot_conda.sh` | 새 기기 설치 스크립트 |
 | `activate.sh` | conda 활성화 + `HF_HOME` + 작업 폴더 이동 (`lerobot_conda.sh` 가 생성) |
+| `install.ps1` · `openmimic.ps1` · `activate.ps1` | Windows 판 설치·실행 도구·환경 켜기 (UTF-8 BOM — Windows PowerShell 5.1 이 BOM 없는 파일을 시스템 코드 페이지로 읽어 한국어가 깨짐) |
+| `.gitattributes` | `*.ps1` 은 CRLF, `*.sh` 는 LF 로 체크아웃 (Windows 에서 clone 해도 bash 스크립트가 깨지지 않게) |
 
 실행하면 `~/project/openmimic/` 아래에 생기는 파일 (전부 `.gitignore`):
 
@@ -160,6 +162,15 @@ Linux 쪽은 원래 `main.py` 등에 있던 코드를 그대로 옮겼습니다.
 
 설정 파일에는 계속 by-id 우선, 없으면 by-path(USB 위치)를 저장합니다. Windows 의 `COM5` 같은 이름은 꽂을 때마다 바뀔 수 있어 저장하지 않고,
 lerobot 에 넘기기 직전(`make_arm` · CLI 인자 · 점검 도구)에만 해석합니다.
+
+Windows 에서 따로 챙긴 것:
+
+- **UTF-8 모드**: 작업 worker 에 `PYTHONUTF8=1`(`P.child_env_extra`), 서버는 `openmimic.ps1` 이 `-X utf8` 로 띄웁니다.
+  설정·로그·표준출력에 한국어가 많아 Windows 기본 인코딩이면 깨지거나 `UnicodeEncodeError` 로 멈춥니다.
+- **중지 신호**: 작업은 `CREATE_NEW_PROCESS_GROUP` 로 띄우고 `CTRL_BREAK` 를 그 그룹에 보냅니다. 같은 콘솔에 붙어 있어야 닿으므로
+  `openmimic.ps1` 이 서버를 숨은 콘솔(`cmd /c`)로 띄우고, 작업은 그 콘솔을 물려받습니다.
+- **파일 잠금**: 열린 파일은 지울 수 없어 명령 파일은 `P.take_file`(이름 바꾸고 읽기), 렌더 프레임은 같은 크기면 덮어쓰기.
+- **롤아웃 CLI 카메라 경로**: `C:\Users\…\openmimic_sim\cam_top` 처럼 역슬래시·공백이 든 경로도 draccus 가 따옴표 없이 그대로 받는 것을 확인했습니다.
 
 ## 셋업 마법사 내부
 

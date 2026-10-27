@@ -43,6 +43,29 @@ def is_sim_port(spec) -> bool:
     return isinstance(spec, str) and spec.startswith(SIM_PREFIX)
 
 
+# ============================================================================ 기기 플랫폼
+def platform_name() -> str:
+    """설치 스크립트와 같은 플랫폼 이름 — Linux: intel | cuda | thor, Windows: win-intel | win-cuda.
+    OPENMIMIC_PLATFORM 으로 강제할 수 있습니다 (설치 때와 같은 변수)."""
+    forced = os.environ.get("OPENMIMIC_PLATFORM", "").strip()
+    if forced:
+        return forced
+    from shutil import which
+    nvidia = which("nvidia-smi") is not None
+    if IS_WIN:
+        return "win-cuda" if nvidia else "win-intel"
+    import platform
+    if platform.machine() == "aarch64":
+        return "thor"
+    return "cuda" if nvidia or Path("/proc/driver/nvidia").exists() else "intel"
+
+
+def child_env_extra() -> dict:
+    """작업 worker 에 더 넘길 환경 변수. Windows: 파이썬 UTF-8 모드 — 기본 인코딩(cp949·cp1252)으로는
+    한국어가 든 설정·로그·표준출력을 읽고 쓰다 깨지거나 UnicodeError 로 멈춥니다."""
+    return {"PYTHONUTF8": "1"} if IS_WIN else {}
+
+
 # ============================================================================ 공유 폴더
 def shm_dir(name: str, fallback: Path) -> Path:
     """초당 여러 번 쓰는 작은 파일용 폴더. Linux 는 tmpfs(/dev/shm) 가 있으면 그것, 아니면 fallback."""
@@ -231,6 +254,7 @@ def forward_break_to_sigint() -> None:
 
 
 def stdin_line_ready() -> bool:
+    # TODO(win-verify): Windows 콘솔에서 msvcrt 로 Enter 감지 (tools_armcheck --sweep 의 '끝내기')
     """터미널에서 Enter 가 눌렸으면 그 줄을 읽어 버리고 True (기다리지 않음).
     Linux: select(stdin) · Windows: msvcrt (Windows 의 select 는 소켓만 받음)."""
     if IS_WIN:
@@ -300,6 +324,7 @@ def _win_comports():
 
 
 def _win_port_entry(p):
+    # TODO(win-verify): SO-ARM101 보드(CH343 1a86:55d3)에서 pyserial 이 시리얼 번호·USB 위치(location)를 채우는지
     """pyserial ListPortInfo → 포트 항목. USB 가 아닌 COM(메인보드 COM1 등)은 None.
     by_id = usb-<vid>_<pid>_<시리얼번호> (보드에 시리얼 번호가 있을 때만), by_path = USB 위치(예 1-3.2)."""
     if p.vid is None:
@@ -423,6 +448,10 @@ if IS_WIN:
             "    꽂은 USB 물리 포트에 고정되니 이 경우엔 <b>항상 같은 USB 구멍에</b> 꽂아야 합니다.\n"
             "    COM 번호(COM5 등)는 꽂을 때마다 바뀔 수 있어 저장하지 않습니다."),
         "cam_path_hint": "dshow: 로 시작하는 장치 경로여야 합니다",
+        "rerun_hint": "activate.ps1 없이 실행한 것 같습니다. OpenMimic 을 끄고 openmimic.ps1 start 로 다시 실행하세요",
+        "ov_install": "install.ps1 로 설치하거나 ",
+        "reinstall": "install.ps1 을 다시 돌려도 됩니다",
+        "ov_driver": "NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요",
     }
 else:
     TEXT = {
@@ -439,6 +468,10 @@ else:
             "    <b>sn 이 없으면</b> 같은 모델끼리 by-id 가 겹치므로 <span class=mono>/dev/serial/by-path</span> 를 씁니다 —\n"
             "    꽂은 USB 물리 포트에 고정되니 이 경우엔 <b>항상 같은 USB 구멍에</b> 꽂아야 합니다."),
         "cam_path_hint": "/dev/ 로 시작해야 합니다",
+        "rerun_hint": "activate.sh 없이 실행한 것 같습니다. OpenMimic 을 끄고 ./openmimic.sh start 로 다시 실행하세요",
+        "ov_install": "OPENMIMIC_PLATFORM=intel ./lerobot_conda.sh 로 설치하거나 ",
+        "reinstall": "lerobot_conda.sh 를 다시 돌려도 됩니다",
+        "ov_driver": "NPU 는 /dev/accel/accel0·드라이버, GPU 는 compute-runtime 설치를 확인하세요",
     }
 
 
@@ -517,6 +550,7 @@ def parse_ffmpeg_dshow(text: str) -> list[dict]:
 
 
 def _dshow_from_ffmpeg():
+    # TODO(win-verify): ffmpeg 목록에서 빠지는 장치('(none)' 가상 카메라 등)가 있으면 인덱스가 어긋날 수 있음
     exe = None
     for cand in ("ffmpeg", "ffmpeg.exe"):
         from shutil import which
@@ -558,6 +592,7 @@ def dshow_usb(path: str) -> dict:
 
 
 def _win_cameras():
+    # TODO(win-verify): DirectShow 나열 순서가 OpenCV CAP_DSHOW 인덱스와 같은지, 장치 경로가 재부팅 뒤에도 같은지(같은 모델 2대)
     """Windows: DirectShow 장치 순서 = OpenCV CAP_DSHOW 인덱스. 안정 식별자는 DirectShow 장치 경로
     (보드 시리얼이 있으면 시리얼 기반, 없으면 USB 위치 기반으로 Windows 가 만든 값)."""
     import cv2

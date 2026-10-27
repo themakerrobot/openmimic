@@ -71,7 +71,20 @@ sleep 3; tail -f lerobot_conda.log        # "=== 완료 ===" 가 나오면 Ctrl+
 브라우저에서 `start` 가 알려 준 주소(**`http://<PC IP>:8080`**)로 들어갑니다. 처음 열면 **셋업 마법사**가 바로 뜨고,
 그다음부터는 데이터셋 화면 위의 **시작하기** 안내(셋업 → 캘리브레이션 → 수집 → 학습 → 실행)를 따라가면 됩니다.
 
-- 기기 종류(Intel / Thor / NVIDIA)는 자동으로 고릅니다. Ubuntu 22.04 · 24.04 · 26.04
+### Windows 10 / 11 (시험 단계 — 실기 검증 전)
+
+PowerShell 에서 (git 이 없으면 먼저 `winget install --id Git.Git -e`):
+
+```powershell
+git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic; cd $HOME\project\openmimic
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" 가 나올 때까지
+powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
+```
+
+`openmimic.ps1` 은 `openmimic.sh` 와 같은 명령(`start · stop · restart · status · log · update · autostart on|off`)을 받습니다.
+처음 켤 때 Windows 방화벽 창이 뜨면 **허용**해야 다른 PC·태블릿에서 접속됩니다.
+
+- 기기 종류(Intel / Thor / NVIDIA)는 자동으로 고릅니다. Ubuntu 22.04 · 24.04 · 26.04, Windows 10 · 11
 - **다른 사람 환경을 바꾸지 않습니다** — conda 는 설치만 하고 `~/.bashrc` 를 건드리지 않으며, 패키지는 전부 `openmimic` 가상환경 안에 들어갑니다
 - 업데이트·플랫폼 등 자세한 내용은 **[docs/INSTALL.md](docs/INSTALL.md)**
 
@@ -289,7 +302,8 @@ SO-ARM101 한팔은 **물리 시뮬레이션(MuJoCo)** 을 켜고 가상 장치�
 
 | 증상 | 확인 |
 |---|---|
-| 포트가 안 보임 | USB 다시 꽂기, 설치 후 재로그인 했는지 (`groups` 에 `dialout`) |
+| 포트가 안 보임 | USB 다시 꽂기, 설치 후 재로그인 했는지 (`groups` 에 `dialout`). Windows 는 장치 관리자의 **포트(COM & LPT)** 에 보이는지, 드라이버(CH340/CH343 · CP210x) |
+| 재부팅 뒤 팔·카메라가 바뀜 (Windows) | 시리얼 번호 없는 보드·카메라는 **꽂은 USB 구멍**을 따라갑니다 — 항상 같은 구멍에. 카메라가 번호로만 잡히면 `pip install pygrabber` |
 | "캘리브레이션 파일이 없습니다" | 셋업 마법사 ③ 또는 캘리브레이션 탭. 다른 PC 의 파일이면 캘리브레이션 → 가져오기 |
 | 3D 가 안 나옴 | 3D 는 인터넷(CDN)에서 받습니다. 인터넷이 없으면 3D 칸만 빠지고 나머지는 동작 |
 | 카메라 여러 대가 끊김 | 셋업 → 카메라 **형식** 을 MJPG 로, 카메라는 PC 본체 포트에 |
@@ -298,7 +312,7 @@ SO-ARM101 한팔은 **물리 시뮬레이션(MuJoCo)** 을 켜고 가상 장치�
 | 실행이 바로 끝남 | 실행 화면의 **원인 추정** 과 로그 |
 | "정책이 카메라 … 를 씁니다" / "관절 수 …" | 학습 때와 카메라 이름·한팔/양팔이 다름 — 셋업을 학습 때와 같게 |
 | 업데이트 후 화면이 이상함 | `./openmimic.sh restart` + 브라우저 강력 새로고침 (Ctrl+Shift+R) |
-| 화면 위에 "캘리브레이션 폴더가 설치 폴더가 아니라 …" | `activate.sh` 없이 켠 경우입니다. 끄고 `./openmimic.sh start` 로 다시 켜세요 |
+| 화면 위에 "캘리브레이션 폴더가 설치 폴더가 아니라 …" | `activate.sh` 없이 켠 경우입니다. 끄고 `./openmimic.sh start` 로 다시 켜세요 (Windows 는 `openmimic.ps1 start`) |
 | "전원 점검 실패 — 시작하지 않았습니다" | 리더·팔로워 어댑터가 바뀌었거나 전압이 서보 한계 밖입니다. **전원부터 분리**하고 어댑터 라벨을 확인하세요 |
 | "서보 상태 이상으로 자동 정지" | 과열이면 식힌 뒤 막힘·과부하 원인을, 전압 강하면 어댑터 전류 용량·커넥터를 확인하세요 |
 

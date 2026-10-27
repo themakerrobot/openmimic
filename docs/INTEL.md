@@ -19,6 +19,9 @@ groups                                                                   # rende
   (우분투·커널 버전 조합은 릴리스 노트로 확인 필요)
 - GPU 가 안 보이면: [compute-runtime](https://github.com/intel/compute-runtime/releases) (OpenCL / level-zero)
 - Ubuntu 26.04 + Core Ultra 에서는 기본 설치만으로 `['CPU', 'GPU', 'NPU']` 가 잡혔습니다 (실기 확인).
+- Windows(`win-intel`, [INSTALL.md](INSTALL.md#windows-10--11--installps1-시험-단계))는 `install.ps1` 이 OpenVINO 까지 설치하고 같은 점검을 합니다.
+  NPU 는 장치 관리자의 **신경 프로세서**(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버가 필요합니다.
+  **Windows 에서 NPU 변환·추론은 아직 실기 확인 전**입니다 ([WINDOWS_PORT.md](WINDOWS_PORT.md)).
 
 ## 2. 모델 가져오기
 

@@ -91,8 +91,7 @@ def calib_root_warning():
         return ""
     if CALIB_ROOT.resolve() == EXPECTED_CALIB_ROOT.resolve():
         return ""
-    return (f"캘리브레이션 폴더가 설치 폴더({EXPECTED_CALIB_ROOT})가 아니라 {CALIB_ROOT} 입니다 — activate.sh 없이 실행한 것 같습니다. "
-            "OpenMimic 을 끄고 ./openmimic.sh start 로 다시 실행하세요")
+    return (f"캘리브레이션 폴더가 설치 폴더({EXPECTED_CALIB_ROOT})가 아니라 {CALIB_ROOT} 입니다 — {P.TEXT['rerun_hint']}")
 
 
 def lan_urls(port):
@@ -130,6 +129,7 @@ PREVIEW_FPS = 10          # record worker 가 미리보기 JPEG 을 갱신하는
 READY_CHUNK_S = 2.0       # 수집 대기 중 record_loop 을 끊어 도는 단위 (이 틈에 온도를 읽습니다)
 NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 # record worker ↔ 웹 사이의 상태/미리보기/명령 파일. 초당 수십 회 쓰므로 tmpfs 를 우선합니다.
+# TODO(win-verify): Windows 는 읽는 중인 파일에 os.replace 가 PermissionError — 그 차례 갱신만 건너뜀 (OSError 처리)
 RUN_DIR = P.shm_dir("openmimic", PROJ / "openmimic_run")
 
 # ------------------------------- 설정 ---------------------------------------
@@ -1245,6 +1245,7 @@ def child_env():
     env.pop("DISPLAY", None)
     env.pop("WAYLAND_DISPLAY", None)
     env["XDG_SESSION_TYPE"] = "tty"
+    env.update(P.child_env_extra())
     return env
 
 
@@ -4034,8 +4035,7 @@ async def api_ov_convert(req: Request):
     d = ov_devices(refresh=True)
     if not d.get("ok"):
         return JSONResponse({"error": f"OpenVINO 를 쓸 수 없습니다 ({d.get('error')}) — Intel 기기에서 "
-                                      "OPENMIMIC_PLATFORM=intel ./lerobot_conda.sh 로 설치하거나 "
-                                      "pip install openvino nncf"}, status_code=400)
+                                      f"{P.TEXT['ov_install']}pip install openvino nncf"}, status_code=400)
     # 추론 중엔 NPU·CPU 를 같이 써서 지연 측정이 틀어지고, 같은 IR 을 덮어쓰게 됩니다
     busy = busy_with(("rollout", "ovconvert"))
     if busy:
@@ -4186,7 +4186,7 @@ def policy_train_args(pol, ds_root, opts=None):
         importlib.invalidate_caches()
         if importlib.util.find_spec("lerobot_policy_act2") is None:
             return None, ("ACT2 플러그인이 설치돼 있지 않습니다 — 터미널에서: "
-                          "pip install --no-deps -e plugins/lerobot_policy_act2 (lerobot_conda.sh 를 다시 돌려도 됩니다)"), warns
+                          f"pip install --no-deps -e plugins/lerobot_policy_act2 ({P.TEXT['reinstall']})"), warns
         if "aug" in opts:
             args += ["--policy.aug_shift=0.06", "--policy.aug_color=0.2", "--policy.state_dropout=0.1"]
         if "interp" in opts:
@@ -6557,7 +6557,7 @@ def setup_page():
 def api_setup_state():
     busy = exclusive_busy()
     return {"config": CFG, "ports": list_serial_ports(), "calib": calib_status(),
-            "busy": f"{busy['id']} 실행 중" if busy else ""}
+            "busy": f"{busy['id']} 실행 중" if busy else "", "platform": P.platform_name()}
 
 
 @app.get("/api/setup/ports")
@@ -8371,6 +8371,7 @@ SETUP_HTML = """
     <label class=f style="flex:1;min-width:240px">기본 태스크 설명 <input id=task></label>
   </div>
   <div id=calib></div>
+  <p class=muted id=platinfo style="margin:8px 0 0"></p>
 </div>
 
 <div class=toolbar>
@@ -8407,6 +8408,7 @@ function sameDev(a,b){
 async function boot(){
   const s=await jget('/api/setup/state');
   CFG=s.config; PORTS=s.ports;
+  $('platinfo').textContent='기기 플랫폼: '+(s.platform||'-');
   $('busywarn').innerHTML = s.busy ? '<p class="badge b-warn">'+E(s.busy)+' — 저장/감시가 막힙니다</p>' : '';
   $('robot_id').value=CFG.robot_id||''; $('fps').value=CFG.fps||30;
   $('mrt').value=(CFG.max_relative_target==null?'':CFG.max_relative_target);
