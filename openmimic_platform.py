@@ -81,6 +81,40 @@ def frame_dir() -> Path:
     return shm_dir("openmimic_sim", SIM_DIR)
 
 
+def replace_file(src, dst, wait: float = 2.0) -> None:
+    """os.replace — Windows 는 다른 프로세스·스레드(화면 갱신 읽기, Windows Defender 검사)가 대상 파일을 잠깐 열고 있으면
+    PermissionError 로 실패합니다. 그 사이 wait 초까지 잠깐씩 다시 시도합니다. Linux 는 os.replace 그대로."""
+    if not IS_WIN:
+        os.replace(src, dst)
+        return
+    import time
+    end = time.monotonic() + wait
+    while True:
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if time.monotonic() >= end:
+                raise
+            time.sleep(0.03)
+
+
+def read_text(path, wait: float = 1.0) -> str:
+    """Path.read_text — Windows 는 바꿔치기 중인 파일을 여는 순간 PermissionError 가 날 수 있어 잠깐 다시 시도합니다.
+    (읽기 실패를 '파일 없음' 으로 보고 기본값을 저장하면 설정이 지워집니다) Linux 는 그대로."""
+    if not IS_WIN:
+        return Path(path).read_text()
+    import time
+    end = time.monotonic() + wait
+    while True:
+        try:
+            return Path(path).read_text()
+        except PermissionError:
+            if time.monotonic() >= end:
+                raise
+            time.sleep(0.03)
+
+
 def take_file(path: Path):
     """명령 파일을 통째로 가져갑니다 (내용 문자열, 없거나 지금 못 가져가면 None).
     이름을 바꾼 뒤 읽고 지웁니다 — Windows 는 다른 프로세스가 쓰려고 연 파일을 지울 수 없어

@@ -129,7 +129,7 @@ PREVIEW_FPS = 10          # record worker 가 미리보기 JPEG 을 갱신하는
 READY_CHUNK_S = 2.0       # 수집 대기 중 record_loop 을 끊어 도는 단위 (이 틈에 온도를 읽습니다)
 NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 # record worker ↔ 웹 사이의 상태/미리보기/명령 파일. 초당 수십 회 쓰므로 tmpfs 를 우선합니다.
-# TODO(win-verify): Windows 는 읽는 중인 파일에 os.replace 가 PermissionError — 그 차례 갱신만 건너뜀 (OSError 처리)
+# Windows 는 읽는 중인 파일에 os.replace 가 PermissionError — P.replace_file 이 잠깐씩 다시 시도합니다
 RUN_DIR = P.shm_dir("openmimic", PROJ / "openmimic_run")
 
 # ------------------------------- 설정 ---------------------------------------
@@ -166,7 +166,7 @@ def load_config():
     cfg = json.loads(json.dumps(DEFAULT_CONFIG))
     if CONFIG_FILE.exists():
         try:
-            user = json.loads(CONFIG_FILE.read_text())
+            user = json.loads(P.read_text(CONFIG_FILE))
             if isinstance(user, dict):
                 cfg.update(user)
         except Exception as e:
@@ -508,18 +508,18 @@ def safe_name(s):
 
 def load_json(p, default):
     try:
-        return json.loads(Path(p).read_text())
+        return json.loads(P.read_text(p))
     except Exception:
         return default
 
 
 def _atomic_write(p, text):
-    """임시 파일에 쓰고 os.replace — 쓰는 도중에 다른 스레드가 읽어도 빈/반쪽 파일을 보지 않습니다.
+    """임시 파일에 쓰고 바꿔치기(P.replace_file) — 쓰는 도중에 다른 스레드가 읽어도 빈/반쪽 파일을 보지 않습니다.
     (반쪽 파일을 읽으면 load_json 이 기본값을 돌려주고, 그걸 다시 저장하면 전부 지워집니다)"""
     p = Path(p)
     tmp = p.with_name(f".{p.name}.{os.getpid()}.{threading.get_ident()}.tmp")
     tmp.write_text(text)
-    os.replace(tmp, p)
+    P.replace_file(tmp, p)
 
 
 def save_json(p, obj):
@@ -6928,7 +6928,7 @@ def import_board_calibration(side, role):
         shutil.copy2(path, path.with_suffix(".json.bak"))
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=4))        # lerobot _save_calibration 과 같은 모양
-    os.replace(tmp, path)
+    P.replace_file(tmp, path)
     # 진단 기록도 지금 값으로 갱신 (파일 비교가 바로 '일치' 로 보이도록)
     h = ARMCHECK.history.get(port)
     if h is not None:
@@ -9369,7 +9369,7 @@ async def api_calib_import(req: Request, overwrite: int = 0):
             shutil.copy2(dst, dst.with_suffix(".json.bak"))
         tmp = dst.with_suffix(".json.tmp")
         tmp.write_bytes(data)
-        os.replace(tmp, dst)
+        P.replace_file(tmp, dst)
         done.append(f"{dst.parent.name}/{dst.name}")
     return {"ok": True, "imported": done, "same": len(items) - len(done), "bad": bad}
 
@@ -9819,7 +9819,7 @@ class _Preview:
             st["elapsed"] = round(time.time() - st["t0"], 1)
         tmp = self.rd / "status.json.preview.tmp"     # put() 과 다른 임시 파일 (동시 쓰기 섞임 방지)
         tmp.write_text(json.dumps(st))
-        os.replace(tmp, self.rd / "status.json")
+        P.replace_file(tmp, self.rd / "status.json")
 
     def _loop(self):
         try:
@@ -9837,7 +9837,7 @@ class _Preview:
                         if ok:
                             tmp = self.rd / f"cam_{k}.jpg.tmp"
                             tmp.write_bytes(buf.tobytes())
-                            os.replace(tmp, self.rd / f"cam_{k}.jpg")
+                            P.replace_file(tmp, self.rd / f"cam_{k}.jpg")
             except Exception:
                 pass
             time.sleep(max(0.0, 1.0 / PREVIEW_FPS - (time.monotonic() - t0)))
@@ -9901,7 +9901,7 @@ def worker_record(jid):
         try:
             tmp = rd / "status.json.tmp"
             tmp.write_text(json.dumps(status))
-            os.replace(tmp, rd / "status.json")
+            P.replace_file(tmp, rd / "status.json")
         except OSError:
             pass
 

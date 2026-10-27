@@ -67,6 +67,21 @@
 **고친 방법**: 보드 잠금 안에서는 레지스터만 읽고, MuJoCo 호출은 잠금 밖에서 합니다.
 고친 뒤 자동 녹화 3 에피소드를 끝까지 통과합니다.
 
+**남은 것**: CPU 렌더(OSMesa) 시험 환경에서는 렌더가 파이썬 GIL 을 쥐어 응답 스레드가 드물게 27~300 ms 밀립니다.
+MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 오류가 한 번 났습니다. GPU 렌더(EGL·wgl)에서는 렌더 시간이 짧아 덜할 것으로 보지만 확인 전입니다.
+
+## 3-1. Windows 실기에서 나온 문제
+
+**설정 저장·환경 전환이 안 되거나 중간에 멈춤.**
+
+- 원인: 설정 파일은 임시 파일에 쓴 뒤 `os.replace` 로 바꿔치기합니다. Windows 는 그 순간 다른 쪽이 대상 파일을 열고 있으면
+  `PermissionError` 로 실패합니다. 다른 쪽이란 화면 갱신이 읽는 중이거나 Windows Defender 가 검사 중인 경우입니다 (Linux 는 열려 있어도 바꿔치기가 됨).
+- 영향: 저장이 실패하면 포트 지정이 덮어써지지 않습니다. 가상 장치를 끌 때 환경 되돌리기도 중간에 멈춰,
+  가상 장치는 꺼졌는데 환경은 가상 팔용(`sim-…`)으로 남을 수 있습니다.
+- 고친 방법: `P.replace_file` 이 Windows 에서 최대 2 초까지 잠깐씩 다시 시도합니다.
+  읽기도 `P.read_text` 로 잠깐 다시 시도합니다 — 읽기 실패를 '파일 없음' 으로 보고 기본값을 저장하면 설정이 지워지기 때문입니다.
+  `os.replace` 를 쓰던 곳은 모두 바꿨습니다 (설정·환경·캘리브레이션 파일, 수집·롤아웃 상태와 미리보기, 가상 장치 상태, OpenVINO 메타).
+
 ## 4. TODO(win-verify) 목록
 
 | 위치 | 확인할 것 |
@@ -79,7 +94,7 @@
 | `openmimic_platform.py` `stdin_line_ready` | Windows 콘솔에서 msvcrt 로 Enter 감지 (`tools_armcheck --sweep`) |
 | `openmimic_platform.py` `setup_mujoco_gl` | 원격 데스크톱·서비스 세션처럼 데스크톱이 없을 때 `wgl` 숨은 창이 만들어지는지 |
 | `openmimic_mujoco.py` `_write_frame` | 쓰는 쪽·읽는 쪽이 같은 파일을 동시에 memmap 할 때 |
-| `main.py` `RUN_DIR` | 읽는 중인 상태 파일에 `os.replace` 가 PermissionError — 그 차례 갱신만 건너뜀 (OSError 처리됨). 화면이 늦게 갱신되는 정도인지 |
+| `openmimic_platform.py` `replace_file` · `read_text` | 2 초 다시 시도로 충분한지 (Defender 검사가 더 길면 저장 실패가 남음) |
 | `install.ps1` XPU | 휠 설치·장치 인식은 확인 (`2.11.0+xpu`, `xpu: True`, Arc 140V). **학습이 실제로 도는지**는 아직 |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
 | `install.ps1` PyAV | Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 있는지 — 수집 영상 인코딩 |

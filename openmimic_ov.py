@@ -360,7 +360,7 @@ def convert(ck, int8=False, fps=30, n_lat=N_LAT):
     }
     tmp = od / (META + ".tmp")
     tmp.write_text(json.dumps(meta, indent=2, ensure_ascii=False))
-    os.replace(tmp, od / META)
+    P.replace_file(tmp, od / META)
     best = recommend(meta)
     say("완료. " + (f"권장: {best[1].upper()} · {best[0]}" if best else "실시간 기준을 만족하는 장치가 없습니다"))
     return meta

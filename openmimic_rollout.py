@@ -15,7 +15,6 @@
 서보 상태 감시(openmimic_health)가 정지 판정을 내면 중지 버튼과 같은 SIGINT 를 자기 자신에게 보냅니다.
 """
 import json
-import os
 import sys
 import threading
 import time
@@ -177,7 +176,7 @@ class Monitor:
     def write(self):
         tmp = self.rd / "status.json.tmp"
         tmp.write_text(json.dumps(self.snapshot()))
-        os.replace(tmp, self.rd / "status.json")
+        P.replace_file(tmp, self.rd / "status.json")
 
     def _loop(self):
         try:
@@ -195,7 +194,7 @@ class Monitor:
                         if ok:
                             tmp = self.rd / f"cam_{k}.jpg.tmp"
                             tmp.write_bytes(buf.tobytes())
-                            os.replace(tmp, self.rd / f"cam_{k}.jpg")
+                            P.replace_file(tmp, self.rd / f"cam_{k}.jpg")
             except Exception:      # noqa: BLE001 — 미리보기 실패가 롤아웃을 멈추면 안 됩니다
                 pass
             time.sleep(max(0.0, 1.0 / PREVIEW_FPS - (time.monotonic() - t0)))

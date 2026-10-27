@@ -481,7 +481,7 @@ def main(argv=None):
                 "cams": cams, "physics": "mujoco" if world is not None else "",
                 "task": dict(world.state(), demo=demo_left()) if world is not None else None},
                 ensure_ascii=False, indent=1))
-            os.replace(tmp, SIM_FILE)
+            P.replace_file(tmp, SIM_FILE)
 
     def demo_left():
         ld = next((x for x in arms if x.role == "leader"), None)

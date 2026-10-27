@@ -44,7 +44,7 @@ def port_name(port: str) -> str:
 def sim_info() -> dict:
     """가상 팔 도구가 켜져 있으면 상태 파일 내용, 아니면 {}."""
     try:
-        d = json.loads(SIM_FILE.read_text())
+        d = json.loads(P.read_text(SIM_FILE))
     except (OSError, ValueError):
         return {}
     if not isinstance(d, dict) or not P.pid_exists(d.get("pid")):
