@@ -328,6 +328,7 @@ The detailed documents are in Korean.
 | [docs/POLICIES.md](docs/POLICIES.md) | Training policy comparison, bimanual support, policies not included |
 | [docs/INTEL.md](docs/INTEL.md) | Intel Core Ultra — OpenVINO conversion · NPU inference, XPU training, measurements |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Structure · design reasons · config file format · decision criteria (for developers) |
+| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows support — what changed, what was verified and what is not yet verified (Korean) |
 
 ## License
 

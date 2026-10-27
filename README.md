@@ -324,6 +324,7 @@ SO-ARM101 한팔은 **물리 시뮬레이션(MuJoCo)** 을 켜고 가상 장치�
 | [docs/POLICIES.md](docs/POLICIES.md) | 학습 정책 비교, 양팔 지원, 넣지 않은 정책 |
 | [docs/INTEL.md](docs/INTEL.md) | Intel Core Ultra — OpenVINO 변환·NPU 추론, XPU 학습, 실측값 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 구조·설계 이유·설정 파일 형식·판정 근거 (개발자용) |
+| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows 지원 — 바뀐 점, 확인한 것과 아직 확인 못 한 것 |
 
 ## License
 
