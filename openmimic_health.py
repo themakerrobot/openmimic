@@ -19,9 +19,13 @@
   [경험값]  온도 경고·정지 여유, 전압 강하 비율 — 데이터시트 값이 아닙니다. 아래 상수로 조정.
 """
 import json
+import os
 import statistics
+import threading
 import time
 from pathlib import Path
+
+import openmimic_platform as P
 
 PERIOD_S = 1.0               # 실행 중 읽기 주기 (s) — 레지스터 3개 × 팔 수만큼 버스 왕복이 늘어납니다
 TEMP_WARN_MARGIN = 10        # [경험값] 온도 한계보다 이만큼(°C) 아래부터 경고 (STS3215 공장 한계 70 → 60 = Seeed 권장 상한)
@@ -109,7 +113,7 @@ class PowerMemory:
 
     def load(self):
         try:
-            d = json.loads(self.path.read_text())
+            d = json.loads(P.read_text(self.path))
             return d if isinstance(d, dict) else {}
         except (OSError, ValueError):
             return {}
@@ -121,9 +125,9 @@ class PowerMemory:
     def put(self, key, volt):
         d = self.load()
         d[key] = round(float(volt), 2)
-        tmp = self.path.with_suffix(".tmp")
+        tmp = self.path.with_name(f".{self.path.name}.{os.getpid()}.{threading.get_ident()}.tmp")   # 동시 저장끼리 안 겹치게
         tmp.write_text(json.dumps(d, indent=1))
-        tmp.replace(self.path)
+        P.replace_file(tmp, self.path)
 
 
 # ============================================================================ 2. 실행 중 감시

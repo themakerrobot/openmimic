@@ -20,6 +20,8 @@ import sys
 import time
 from pathlib import Path
 
+import openmimic_platform as P
+
 OPENMIMIC_TAG = "openmimic"
 _WHOAMI = {"token": None, "t": 0.0, "v": None}
 _FLAVORS = {"t": 0.0, "v": None}
@@ -213,7 +215,7 @@ def cloud_train(root, name, flavor, train_args):
     argv = [sys.executable, "-m", "lerobot.scripts.lerobot_train", f"--dataset.repo_id={repo}", *argv,
             f"--job.target={flavor}", f'--job.tags=["{OPENMIMIC_TAG}"]', "--save_checkpoint_to_hub=true"]
     say("[hub] HF Jobs 제출: " + " ".join(argv[2:]))
-    os.execv(sys.executable, argv)        # PID 를 그대로 이어받아 OpenMimic 의 작업 추적·중지가 그대로 동작
+    P.exec_replace(argv)        # PID 를 그대로 이어받아 OpenMimic 의 작업 추적·중지가 그대로 동작 (Windows 는 자식으로)
 
 
 def main(argv=None):

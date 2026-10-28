@@ -147,16 +147,18 @@ def ov_result(ck):
 
 def trial_rate(ck):
     try:
-        rel = str(Path(ck).resolve().relative_to(OUT_ROOT.resolve()))
+        rel = Path(ck).resolve().relative_to(OUT_ROOT.resolve()).as_posix()      # OpenMimic 시도 기록 키와 같게
     except ValueError:
         return None, 0
-    t = (json.loads(TRIALS_FILE.read_text()) if TRIALS_FILE.is_file() else {}).get(rel) or []
+    t = (json.loads(TRIALS_FILE.read_text(encoding="utf-8")) if TRIALS_FILE.is_file() else {}).get(rel) or []
     n = len(t)
     ok = sum(1 for x in t if x.get("result") == "success")
     return (round(100 * ok / n) if n else None), n
 
 
 def main():
+    import openmimic_platform as P
+    P.utf8_stdio()                          # Windows 에서 activate 없이 돌려도 한국어 출력이 깨지지 않게
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--dataset", help=f"{DATA_ROOT} 안의 데이터셋 이름")
     ap.add_argument("--root", help="데이터셋 경로를 직접 지정 (--dataset 대신)")
@@ -207,18 +209,18 @@ def main():
                     print(f"[train] {out.name}: {' '.join(pargs)}")
                     t0 = time.time()
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    with open(str(out) + ".log", "w") as f:
+                    with open(str(out) + ".log", "w", encoding="utf-8") as f:
                         r = subprocess.run(argv, stdout=f, stderr=subprocess.STDOUT, text=True)
                     Path(str(out) + ".log").replace(log) if out.exists() else None
                     row["train_min"] = round((time.time() - t0) / 60, 1)
                     if r.returncode != 0:
-                        tail = Path(str(out) + ".log").read_text()[-400:] if Path(str(out) + ".log").exists() else ""
+                        tail = Path(str(out) + ".log").read_text(encoding="utf-8", errors="replace")[-400:] if Path(str(out) + ".log").exists() else ""
                         row["error"] = f"train rc={r.returncode}: {tail.strip().splitlines()[-1] if tail else ''}"
                         rows.append(row)
                         print("  !! 실패:", row["error"])
                         continue
             if log.is_file():
-                last, tail, sps = parse_train_log(log.read_text())
+                last, tail, sps = parse_train_log(log.read_text(encoding="utf-8", errors="replace"))
                 row.update(loss_last=last, loss_tail=tail, step_per_s=round(sps, 2) if sps else None)
                 if "train_min" not in row and sps:
                     row["train_min"] = round(a.steps / sps / 60, 1)
@@ -233,7 +235,7 @@ def main():
                 subprocess.run([sys.executable, str(HERE / "openmimic_ov.py"), "convert", str(ck)])
             row.update(ov_result(ck))
             rate, n = trial_rate(ck)
-            row.update(success_pct=rate, trials=n, checkpoint=str(ck.relative_to(OUT_ROOT)))
+            row.update(success_pct=rate, trials=n, checkpoint=ck.relative_to(OUT_ROOT).as_posix())
             rows.append(row)
             print("  ", {k: row[k] for k in row if k in ("train_min", "loss_tail", "chunk_ms", "params_m", "trainable_m", "success_pct")})
 
@@ -242,7 +244,7 @@ def main():
             "params_m", "trainable_m", "chunk", "n_action_steps", "device", "chunk_ms", "p95_ms",
             *sorted({k for r in rows for k in r if k.startswith("ov")}), "success_pct", "trials", "checkpoint", "error"]
     csv_path = OUT_ROOT / f"act2bench_{stamp}.csv"
-    with open(csv_path, "w", newline="") as f:
+    with open(csv_path, "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         w.writeheader()
         w.writerows(rows)
@@ -260,7 +262,7 @@ def main():
            "- 실기 성공률은 실행 탭에서 각 bench_* 체크포인트로 같은 태스크를 20회 이상 돌리고 성공/실패를 누른 뒤 "
            f"`python tools_act2bench.py --dataset {ds} --variants {a.variants} --report-only` 로 다시 뽑으면 채워집니다."]
     md_path = OUT_ROOT / f"act2bench_{stamp}.md"
-    md_path.write_text("\n".join(md) + "\n")
+    md_path.write_text("\n".join(md) + "\n", encoding="utf-8")
     print("\n".join(md))
     print(f"\n저장: {csv_path}\n      {md_path}")
 

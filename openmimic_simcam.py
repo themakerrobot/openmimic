@@ -73,6 +73,7 @@ class SimCapture:
             mm = self._mm[1]
             magic, fw, fh, _seq = np.frombuffer(mm[:16].tobytes(), np.uint32)
             if magic != MAGIC or mm.size < 16 + fw * fh * 3:
+                self._mm = None             # 매핑을 놓아 줍니다 (Windows 는 매핑 중인 파일을 지울 수 없음)
                 return None
             img = np.array(mm[16:16 + fw * fh * 3]).reshape(fh, fw, 3)[:, :, ::-1]
         except (OSError, ValueError):

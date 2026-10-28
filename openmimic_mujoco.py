@@ -426,6 +426,15 @@ class World:
         mm[12:16] = np.frombuffer(np.uint32(f["seq"]).tobytes(), np.uint8)
 
     def close(self):
+        # 머리(magic)를 지워 읽는 쪽이 옛 화면을 계속 보여 주지 않게 하고, 내 매핑을 놓은 뒤 지웁니다
+        # (Windows 는 매핑 중인 파일을 지울 수 없어 파일이 남아도 머리가 지워져 있으면 가상 카메라가 합성 화면으로 돌아감)
+        for f in self._frames.values():
+            try:
+                f["mm"][:4] = 0
+                f["mm"].flush()
+            except (OSError, ValueError):
+                pass
+        self._frames.clear()
         for name in self.cams:
             try:
                 (FRAME_DIR / f"cam_{name}.rgb").unlink()

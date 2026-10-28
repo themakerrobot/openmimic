@@ -237,6 +237,7 @@ def run(io, *, role=None):
 def main(argv=None):
     import openmimic_fakeserial
     openmimic_fakeserial.install()          # --port sim://… 면 가상 팔 도구의 보드
+    P.utf8_stdio()                          # Windows 에서 activate 없이 돌려도 한국어 출력이 깨지지 않게
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--port", required=True)
     ap.add_argument("--role", choices=("follower", "leader"), default="follower")

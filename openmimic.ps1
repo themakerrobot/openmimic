@@ -7,7 +7,7 @@
 #    .\openmimic.ps1 status         켜져 있는지 · 접속 주소
 #    .\openmimic.ps1 log            로그 보기 (Ctrl+C 로 나감 — OpenMimic 은 계속 돎)
 #    .\openmimic.ps1 update         git pull 후 다시 켜기
-#    .\openmimic.ps1 autostart on   로그인 때 자동으로 켜기 — 이 계정만 (작업 스케줄러)
+#    .\openmimic.ps1 autostart on   로그인 때 자동으로 켜기 — 이 계정만 (시작프로그램 폴더 바로 가기)
 #    .\openmimic.ps1 autostart off  자동 시작 끄기
 #
 #  실행 정책 때문에 막히면: powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
@@ -22,8 +22,10 @@ $Dir = $PSScriptRoot
 $PidFile = Join-Path $Dir 'openmimic_server.pid'
 $LogFile = Join-Path $Dir 'openmimic.log'
 $Port = 8080
-$Task = 'OpenMimic'
-$StartupCmd = Join-Path ([Environment]::GetFolderPath('Startup')) 'OpenMimic.cmd'
+$OldTask = 'OpenMimic'                                                     # 예전 판이 만든 작업 스케줄러 항목 (있으면 지움)
+$StartupDir = [Environment]::GetFolderPath('Startup')
+$StartupLnk = Join-Path $StartupDir 'OpenMimic.lnk'
+$StartupCmd = Join-Path $StartupDir 'OpenMimic.cmd'                        # 예전 판이 만든 것 (있으면 지움)
 
 function Use-Env {
     if (-not (Test-Path (Join-Path $Dir 'activate.ps1'))) {
@@ -35,19 +37,29 @@ function Use-Env {
     }
 }
 
+# 네이티브 명령(git·schtasks)을 'Stop' 상태에서 돌리면 stderr 출력이 종료 오류가 되므로 그동안만 풉니다
+function Invoke-Native([scriptblock]$Block) {
+    $old = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Block } finally { $ErrorActionPreference = $old }
+}
+
 # pid 파일의 프로세스가 살아 있고 python main.py 이면 그 pid
 function Get-RunningPid {
     if (-not (Test-Path $PidFile)) { return $null }
     $p = (Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
     if (-not $p) { return $null }
     $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$p)" -ErrorAction SilentlyContinue
-    if ($proc -and $proc.CommandLine -match 'main\.py') { return [int]$p }
+    if (-not $proc) { return $null }
+    if ($proc.CommandLine -match 'main\.py') { return [int]$p }
+    if (-not $proc.CommandLine -and $proc.Name -eq 'python.exe') { return [int]$p }   # 관리자 창에서 켠 경우 명령줄을 못 읽음
     return $null
 }
 
 function Show-Urls {
-    $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue |
-        Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' } | Select-Object -ExpandProperty IPAddress
+    $ips = Get-NetIPAddress -AddressFamily IPv4 -AddressState Preferred -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notmatch '^(127\.|169\.254\.)' -and $_.InterfaceAlias -notmatch '^vEthernet' } |
+        Select-Object -ExpandProperty IPAddress
     if (-not $ips) { Write-Host "  http://<이 PC 의 IP>:$Port/"; return }
     foreach ($ip in $ips) { Write-Host "  http://${ip}:$Port/" }
 }
@@ -65,10 +77,10 @@ function Start-OpenMimic {
     $p = Get-RunningPid
     if ($p) { Write-Host "이미 켜져 있습니다 (pid $p)"; Show-Urls; return }
     Use-Env
-    $py = (Get-Command python -ErrorAction Stop).Source
-    # cmd 가 로그 파일에 이어 쓰고(>>), 파이썬은 UTF-8 모드(-X utf8). 창은 숨깁니다.
-    # 작업(수집·학습·실행)은 python 의 자식으로 같은 숨은 콘솔에 붙어, 작업 탭 '중지'(CTRL_BREAK)가 닿습니다.
-    $cmdLine = "`"`"$py`" -X utf8 main.py >> `"$LogFile`" 2>&1`""
+    $py = Join-Path $env:CONDA_PREFIX 'python.exe'
+    # cmd 가 로그 파일에 이어 쓰고(>>), 파이썬은 UTF-8 모드(-X utf8)·버퍼 없이(-u — 시작 안내가 바로 로그에 남게). 창은 숨깁니다.
+    # 작업(수집·학습·실행)은 python 의 자식으로 같은 숨은 콘솔에 붙습니다.
+    $cmdLine = "`"`"$py`" -X utf8 -u main.py >> `"$LogFile`" 2>&1`""
     $sh = Start-Process -FilePath $env:ComSpec -ArgumentList @('/c', $cmdLine) -WorkingDirectory $Dir -WindowStyle Hidden -PassThru
     $serverPid = $null
     for ($i = 0; $i -lt 40; $i++) {
@@ -78,12 +90,14 @@ function Start-OpenMimic {
             if ($child) {
                 $serverPid = [int]$child.ProcessId
                 Set-Content -LiteralPath $PidFile -Value $serverPid -Encoding ASCII
+                # 작업 스케줄러 등 낮은 우선순위로 불린 경우에도 서버·작업이 보통 우선순위로 돌게
+                try { (Get-Process -Id $serverPid).PriorityClass = 'Normal' } catch { }
             }
         }
         if ($serverPid -and (Test-Web)) { break }
         if ($sh.HasExited -and -not (Get-RunningPid)) {
             Write-Host "켜다가 멈췄습니다 — 로그 끝부분:"
-            Get-Content -LiteralPath $LogFile -Tail 20 -Encoding UTF8 -ErrorAction SilentlyContinue
+            if (Test-Path $LogFile) { Get-Content -LiteralPath $LogFile -Tail 20 -Encoding UTF8 }
             Remove-Item -LiteralPath $PidFile -ErrorAction SilentlyContinue
             exit 1
         }
@@ -91,7 +105,9 @@ function Start-OpenMimic {
     }
     Write-Host "켰습니다 (pid $serverPid, 로그 $LogFile). 브라우저에서:"
     Show-Urls
-    Get-Content -LiteralPath $LogFile -Encoding UTF8 -ErrorAction SilentlyContinue | Where-Object { $_ -like '!! *' } | Select-Object -Last 3
+    if (Test-Path $LogFile) {
+        Get-Content -LiteralPath $LogFile -Tail 200 -Encoding UTF8 | Where-Object { $_ -like '!! *' } | Select-Object -Last 3
+    }
 }
 
 function Stop-OpenMimic {
@@ -103,6 +119,9 @@ function Stop-OpenMimic {
         if (-not (Get-Process -Id $p -ErrorAction SilentlyContinue)) { break }
         Start-Sleep -Milliseconds 500
     }
+    if (Get-Process -Id $p -ErrorAction SilentlyContinue) {
+        Write-Host "끄지 못했습니다 (pid $p) — 관리자 창에서 켰다면 관리자 창에서 stop 하세요"; exit 1
+    }
     Remove-Item -LiteralPath $PidFile -ErrorAction SilentlyContinue
     Write-Host "껐습니다 (수집·학습 같은 작업은 각자 계속 돌고, 다시 켜면 작업 탭에 그대로 보입니다)"
 }
@@ -111,44 +130,45 @@ function Show-Status {
     $p = Get-RunningPid
     if ($p) { Write-Host "켜져 있음 (pid $p)"; Show-Urls }
     else { Write-Host "꺼져 있음 — .\openmimic.ps1 start" }
-    $onTask = $false
-    try { schtasks /Query /TN $Task 2>$null | Out-Null; $onTask = ($LASTEXITCODE -eq 0) } catch { $onTask = $false }
-    if ($onTask -or (Test-Path $StartupCmd)) { Write-Host "자동 시작: 켜짐" } else { Write-Host "자동 시작: 꺼짐" }
+    if (Test-Path $StartupLnk) { Write-Host "자동 시작: 켜짐" } else { Write-Host "자동 시작: 꺼짐" }
 }
 
 function Update-OpenMimic {
     Set-Location $Dir
-    git diff --quiet; $a = $LASTEXITCODE
-    git diff --cached --quiet; $b = $LASTEXITCODE
+    $a = Invoke-Native { git diff --quiet 2>$null; $LASTEXITCODE }
+    $b = Invoke-Native { git diff --cached --quiet 2>$null; $LASTEXITCODE }
+    if ($a -gt 1 -or $b -gt 1) { Write-Host "git 을 실행하지 못했습니다 — 이 폴더에서 git status 로 확인하세요"; exit 1 }
     if ($a -ne 0 -or $b -ne 0) { Write-Host "고친 파일이 있어 업데이트를 멈춥니다 — git status 로 확인하세요"; exit 1 }
-    git pull --ff-only
-    if ($LASTEXITCODE -ne 0) { Write-Host "git pull 실패 — 위 메시지를 확인하세요"; exit 1 }
+    $code = Invoke-Native { git pull --ff-only 2>&1 | ForEach-Object { Write-Host "$_" }; $LASTEXITCODE }
+    if ($code -ne 0) { Write-Host "git pull 실패 — 위 메시지를 확인하세요"; exit 1 }
     Stop-OpenMimic
     Start-OpenMimic
     Write-Host "브라우저는 강력 새로고침(Ctrl+Shift+R) 하세요"
 }
 
+function Remove-OldAutostart {
+    Remove-Item -LiteralPath $StartupCmd -ErrorAction SilentlyContinue
+    Invoke-Native { schtasks /Delete /TN $OldTask /F 2>&1 | Out-Null }
+}
+
 function Set-Autostart([string]$Mode) {
-    $runLine = "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Dir\openmimic.ps1`" start"
     switch ($Mode) {
         'on' {
-            # TODO(win-verify): 관리자 권한 없는 계정에서 ONLOGON 작업 만들기가 되는지 — 안 되면 시작프로그램 폴더로 대신합니다
-            $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-            schtasks /Create /SC ONLOGON /TN $Task /TR $runLine /F 2>&1 | Out-Null
-            $code = $LASTEXITCODE
-            $ErrorActionPreference = $old
-            if ($code -eq 0) {
-                Write-Host "자동 시작을 켰습니다 — 이 계정으로 로그인하면 OpenMimic 이 켜집니다 (작업 스케줄러: $Task)"
-            } else {
-                Set-Content -LiteralPath $StartupCmd -Encoding ASCII -Value "@echo off`r`nstart `"`" /min $runLine"
-                Write-Host "작업 스케줄러에 등록하지 못해(권한) 시작프로그램 폴더에 넣었습니다: $StartupCmd"
-            }
+            # 시작프로그램 폴더 바로 가기(.lnk) — 관리자 권한이 필요 없고, 배터리일 때도 켜지며, 보통 우선순위로 돕니다.
+            # (작업 스케줄러의 로그온 트리거는 관리자 권한이 필요하고, 기본값이 'AC 전원일 때만'·낮은 우선순위)
+            Remove-OldAutostart
+            $ws = New-Object -ComObject WScript.Shell
+            $l = $ws.CreateShortcut($StartupLnk)
+            $l.TargetPath = Join-Path $PSHOME 'powershell.exe'
+            $l.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Dir\openmimic.ps1`" start"
+            $l.WorkingDirectory = $Dir
+            $l.WindowStyle = 7                                             # 최소화로 시작
+            $l.Save()
+            Write-Host "자동 시작을 켰습니다 — 이 계정으로 로그인하면 OpenMimic 이 켜집니다 ($StartupLnk)"
         }
         'off' {
-            $old = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-            schtasks /Delete /TN $Task /F 2>&1 | Out-Null
-            $ErrorActionPreference = $old
-            Remove-Item -LiteralPath $StartupCmd -ErrorAction SilentlyContinue
+            Remove-OldAutostart
+            Remove-Item -LiteralPath $StartupLnk -ErrorAction SilentlyContinue
             Write-Host "자동 시작을 껐습니다"
         }
         default { Write-Host "사용법: .\openmimic.ps1 autostart on | off"; exit 1 }
@@ -160,11 +180,14 @@ switch ($Command) {
     'stop' { Stop-OpenMimic }
     'restart' { Stop-OpenMimic; Start-OpenMimic }
     'status' { Show-Status }
-    'log' { Get-Content -LiteralPath $LogFile -Tail 50 -Wait -Encoding UTF8 }
+    'log' {
+        if (-not (Test-Path $LogFile)) { Write-Host "아직 로그가 없습니다 — .\openmimic.ps1 start"; exit 1 }
+        Get-Content -LiteralPath $LogFile -Tail 50 -Wait -Encoding UTF8
+    }
     'update' { Update-OpenMimic }
     'autostart' { Set-Autostart $Arg }
     default {
-        Get-Content -LiteralPath $PSCommandPath -Encoding UTF8 | Select-Object -Skip 2 -First 9 | ForEach-Object { $_ -replace '^#', '' }
+        Get-Content -LiteralPath $PSCommandPath -Encoding UTF8 | Select-Object -Skip 1 -First 11 | ForEach-Object { $_ -replace '^#', '' }
         exit 1
     }
 }

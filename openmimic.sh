@@ -61,7 +61,7 @@ do_start() {
     echo "자동 시작 서비스로 켜져 있습니다 — ./openmimic.sh status 로 확인하세요"; return 0
   fi
   need_env
-  nohup python main.py >> "${LOGF}" 2>&1 &
+  nohup python -u main.py >> "${LOGF}" 2>&1 &
   echo $! > "${PIDF}"
   for _ in $(seq 1 40); do
     if curl -s -o /dev/null "http://127.0.0.1:${PORT}/jobs" 2>/dev/null; then break; fi
@@ -132,7 +132,7 @@ After=network-online.target
 
 [Service]
 Type=simple
-ExecStart=/bin/bash -c 'source "${DIR}/activate.sh" && cd "${DIR}" && exec python main.py'
+ExecStart=/bin/bash -c 'source "${DIR}/activate.sh" && cd "${DIR}" && exec python -u main.py'
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:${LOGF}

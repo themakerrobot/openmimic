@@ -98,7 +98,8 @@ def lan_urls(port):
     """이 PC 의 접속 주소 (같은 네트워크의 노트북·태블릿에서 여는 주소)."""
     ips = []
     try:
-        out = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=3).stdout.split()
+        cmd = P.lan_ip_command()
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=3).stdout.split() if cmd else []
         ips = [x for x in out if "." in x and not x.startswith("127.") and not x.startswith("172.17.")]
     except Exception:          # noqa: BLE001
         pass
@@ -399,7 +400,9 @@ def to_en(text):
 
 
 # 사용자가 입력한 글(작업 설명 task, 설정값, 메모)은 번역하면 저장할 때 망가지므로 건드리지 않습니다.
-I18N_KEEP_KEYS = {"task", "tasks", "default_task", "config", "note", "notes", "memo", "desc", "description"}
+I18N_KEEP_KEYS = {"task", "tasks", "default_task", "config", "note", "notes", "memo", "desc", "description",
+                  # 경로·장치 이름 — 폴더 이름에 한국어(예: 사용자 이름)가 있으면 사전이 그 글자를 바꿔 경로가 깨집니다
+                  "dev", "by_id", "by_path", "path", "saved_path", "port", "index_or_path"}
 _I18N_KEEP_HTML = re.compile(r'(\svalue="[^"]*"|<textarea[^>]*>.*?</textarea>)', re.S)
 
 
@@ -503,7 +506,7 @@ def jsattr(v):
 
 def safe_name(s):
     # '.' / '..' 은 정규식은 통과하지만 경로로 쓰면 상위 폴더가 됩니다
-    return bool(s) and NAME_RE.fullmatch(s) is not None and s.strip(".") != ""
+    return bool(s) and NAME_RE.fullmatch(s) is not None and s.strip(".") != "" and P.name_ok(s)
 
 
 def load_json(p, default):
@@ -1344,8 +1347,8 @@ def delete_job(jid):
         return False
     for suffix in (".json", ".log"):
         try:
-            (JOB_DIR / f"{jid}{suffix}").unlink()
-        except FileNotFoundError:
+            P.unlink(JOB_DIR / f"{jid}{suffix}")
+        except OSError:
             pass
     shutil.rmtree(run_dir(jid), ignore_errors=True)
     return True
@@ -1757,17 +1760,22 @@ class LeaderCtl:
         return self.tele is not None
 
     def connect(self):
-        tele = make_arm("leader", self.cfg)
-        if not tele.calibration:
-            raise RuntimeError(
-                f"리더 캘리브레이션 파일이 없습니다: {tele.calibration_fpath} — 캘리브레이션 탭에서 만드세요")
-        connect_leader(tele)
-        try:
-            self.power_warn = power_gate(tele.bus, "leader", self.cfg)
-        except Exception:
-            close_arm(tele, disable_torque=kind()["leader_torque"])
-            raise
-        self.tele = tele
+        # 잠금 안에서 연결 — 연결 도중 제어 탭이 닫혀도 disconnect 가 연결이 끝나길 기다렸다 닫습니다
+        # (아니면 아무도 모르는 리더 포트가 열린 채 남아, Windows 에서는 그 COM 을 다른 곳에서 못 엶)
+        with self.lock:
+            if self.tele is not None:
+                return
+            tele = make_arm("leader", self.cfg)
+            if not tele.calibration:
+                raise RuntimeError(
+                    f"리더 캘리브레이션 파일이 없습니다: {tele.calibration_fpath} — 캘리브레이션 탭에서 만드세요")
+            connect_leader(tele)
+            try:
+                self.power_warn = power_gate(tele.bus, "leader", self.cfg)
+            except Exception:
+                close_arm(tele, disable_torque=kind()["leader_torque"])
+                raise
+            self.tele = tele
 
     def read(self):
         with self.lock:
@@ -1864,6 +1872,11 @@ _rebind(load_config())      # ArmCtl/LeaderCtl 정의 이후에 호출해야 합
 
 def any_arm_connected():
     return any(a.connected for a in ARMS.values())
+
+
+def ports_held():
+    """제어 탭이 팔로워·리더 포트를 잡고 있는지 (리더만 열려 있는 경우 포함)."""
+    return any_arm_connected() or any(ld.connected for ld in LEADERS.values())
 
 
 # ----------------------------- 포트 / 카메라 탐색 (셋업 탭) -------------------
@@ -1986,7 +1999,7 @@ def sim_start(robot, mode, physics=True):
 
 def sim_stop():
     st = sim_state()
-    busy = busy_with(("record", "rollout", "calib"))
+    busy = robot_busy()       # 수집·실행 + 제어 탭·캘리브레이션·포트 감시·점검·확인 — 쓰는 중에 가상 팔이 사라지지 않게
     if busy:
         raise ValueError(f"{busy['id']} 가 가상 팔을 쓰는 중입니다 — 끝낸 뒤 끄세요")
     for a in list(ARMS.values()) + list(LEADERS.values()):
@@ -2214,7 +2227,18 @@ def probe_port(port, full=False):
     Bus = bus_class()
     port = P.resolve_serial_port(port)
     if full:
-        found = Bus.scan_port(port)
+        # lerobot scan_port 는 중간에 오류가 나면 포트를 닫지 않습니다 (Windows 는 COM 을 한 곳만 열 수 있어 그 뒤로 못 씀)
+        bus = Bus(port, {})
+        bus._connect(handshake=False)
+        found = {}
+        try:
+            for baud in bus.available_baudrates:
+                bus.set_baudrate(baud)
+                ids_models = bus.broadcast_ping()
+                if ids_models:
+                    found[baud] = list(ids_models)
+        finally:
+            bus.port_handler.closePort()
         return {"baudrates": {str(b): sorted(ids) for b, ids in found.items()}}
     bus = Bus(port, {})
     bus.connect(handshake=False)
@@ -2364,8 +2388,8 @@ class MotorSetupSession:
         self.last = f"{name}: ID {cur_id} → {target} (baud {baud} → {bus.default_baudrate})"
         self.idx += 1
         if self.idx >= len(self.ORDER):
+            self._close()               # 포트를 먼저 닫고 '끝' 으로 — 끝으로 보이는 순간 다른 쪽이 같은 포트를 열 수 있음 (Windows)
             self.stage = "done"
-            self._close()
 
     def _close(self):
         bus, self.bus = self.bus, None
@@ -2567,7 +2591,7 @@ class VerifySession:
 
     @property
     def active(self):
-        return self.on
+        return self.on or self.bus is not None
 
     def start(self, side, role):
         self.stop()
@@ -2634,12 +2658,13 @@ class VerifySession:
         th, self._th = self._th, None
         if th is not None:
             th.join(timeout=2)
-        bus, self.bus = self.bus, None
+        bus = self.bus
         if bus is not None:
             try:
                 bus.disconnect(disable_torque=False)     # 토크 상태는 건드리지 않습니다
             except Exception:
                 pass
+        self.bus = None                 # 닫은 뒤에 비웁니다 — active 가 그때까지 '사용 중' 으로 남게
         self._reset()
 
     def state(self):
@@ -2659,7 +2684,7 @@ def busy_with(kinds):
 
 def robot_busy():
     """팔(시리얼)을 쓰는 작업: record/rollout + 제어 탭 수동 제어 + Setup 포트 감시"""
-    if any_arm_connected() or CTL_OWNER is not None:
+    if ports_held() or CTL_OWNER is not None:
         return {"id": "manual-control", "kind": "control", "alive": True}
     if WATCH.on:
         return {"id": "port-watch (셋업 탭)", "kind": "setup", "alive": True}
@@ -2680,7 +2705,7 @@ def gpu_or_loop_busy():
 
 
 def exclusive_busy():
-    if any_arm_connected() or CTL_OWNER is not None:     # 연결 중(약 1초)도 점유로 봅니다
+    if ports_held() or CTL_OWNER is not None:     # 연결 중(약 1초)도 점유로 봅니다
         return {"id": "manual-control (제어 탭)", "kind": "control", "alive": True}
     if WATCH.on:
         return {"id": "port-watch (셋업 탭)", "kind": "setup", "alive": True}
@@ -3296,7 +3321,10 @@ def api_delete_dataset(ds: str):
     j = dataset_busy(ds)
     if j:
         return JSONResponse({"error": f"실행 중인 작업({j['id']})이 이 데이터셋을 사용 중"}, status_code=400)
-    shutil.rmtree(p)
+    try:
+        P.remove_dir(p)
+    except OSError as e:
+        return JSONResponse({"error": f"지우지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요 ({e})"}, status_code=400)
     m = load_marks()
     m.pop(ds, None)
     save_marks(m)
@@ -3500,7 +3528,11 @@ async def api_rename_dataset(ds: str, req: Request):
     j = dataset_busy(ds)
     if j:
         return JSONResponse({"error": f"실행 중인 작업({j['id']})이 이 데이터셋을 사용 중"}, status_code=400)
-    await asyncio.to_thread(shutil.move, str(src), str(dst))
+    try:
+        await asyncio.to_thread(P.move_dir, src, dst)
+    except OSError as e:
+        return JSONResponse({"error": f"이름을 바꾸지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요 ({e})"},
+                            status_code=400)
     m = load_marks()
     if ds in m:
         m[new] = m.pop(ds)
@@ -4428,7 +4460,7 @@ async def api_train(req: Request):
     miss = policy_missing(pol)
     if miss:
         return JSONResponse({"error": f"{TRAIN_POLICIES[pol]['label']} 에 필요한 패키지가 없습니다 ({', '.join(miss)}) — 터미널에서: "
-                                      f"cd ~/project/openmimic/lerobot-src && pip install -e \".[{TRAIN_POLICIES[pol]['extra']}]\""},
+                                      + P.TEXT["pip_extra"].format(extra=TRAIN_POLICIES[pol]['extra'])},
                             status_code=400)
     root = DATA_ROOT / ds
     if not root.exists():
@@ -5249,14 +5281,16 @@ def job_ckpt_rel(j):
         if a.startswith("--policy.path="):
             p = Path(a.split("=", 1)[1])
             try:
-                return str(p.resolve().relative_to(OUT_ROOT.resolve()))
+                return p.resolve().relative_to(OUT_ROOT.resolve()).as_posix()     # 목록·모델 화면과 같은 '/' 키
             except ValueError:
                 return ""
     return ""
 
 
 def load_trials():
-    return load_json(TRIALS_FILE, {})
+    t = load_json(TRIALS_FILE, {})
+    # 예전 Windows 판이 '\' 로 저장한 키를 '/' 로 (Linux 키에는 '\' 가 없음)
+    return {k.replace("\\", "/"): v for k, v in t.items()} if any("\\" in k for k in t) else t
 
 
 def trial_summary(rel, trials=None):
@@ -5710,16 +5744,22 @@ async def api_rollout(req: Request):
         # 요청 장치가 없으면 openmimic_ov 가 NPU → GPU → CPU 순으로 대체하고 로그에 크게 알립니다
         head = mon + ["--openmimic.engine=ov", f"--ov.dir={openmimic_ov.ov_dir(ck)}",
                 f"--ov.device={dev}", f"--ov.precision={prec}", f"--ov.fps={CFG['fps']}"]
-    try:
-        argv = (head + [f"--policy.path={ck}"] + robot_cli_args()
+    def _argv():
+        return (head + [f"--policy.path={ck}"] + robot_cli_args()
                 + ([f"--rename_map={json.dumps(rollout_rename_map(rel)[0])}"] if rollout_rename_map(rel)[0] else [])
                 + ["--strategy.type=base", f"--duration={dur}", f"--task={task}",
                    f"--fps={CFG['fps']}"])
-    except (NotImplementedError, ValueError) as e:
+    try:
+        # 스레드에서 — Windows 는 포트·카메라 해석이 장치 목록을 새로 읽느라 수 초 걸릴 수 있어 서버 전체가 멈추지 않게
+        argv = await asyncio.to_thread(_argv)
+    except (NotImplementedError, ValueError, OSError) as e:      # OSError: 포트·카메라를 지금 찾을 수 없음 (Windows)
         return JSONResponse({"error": str(e)}, status_code=400)
     pbad, pwarn = await asyncio.to_thread(power_preflight, ("follower",))
     if pbad:
         return JSONResponse({"error": "전원 점검 실패 — 시작하지 않았습니다\n\n" + "\n".join(pbad + pwarn)}, status_code=400)
+    busy = exclusive_busy()      # 점검하는 동안 제어 탭 등이 팔을 잡았으면 (수집 시작과 같은 재확인)
+    if busy:
+        return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
     sim = sim_physics()
     spec = None
     if sim:
@@ -5929,7 +5969,12 @@ function openWS(){{
   ws.onmessage=e=>{{
     const d=JSON.parse(e.data);
     if(d.type==='init'){{
-      if(d.error){{ wsErr=d.error; setStatus(d.error,'b-bad'); return; }}
+      if(d.error){{
+        // 새로고침 직후에는 직전 페이지의 연결 정리가 아직 안 끝났을 수 있어 한 번만 다시 시도합니다
+        if(d.code==='owner'&&!window._wsRetried){{ window._wsRetried=true; wsErr='잠시 후 다시 연결합니다…'; setTimeout(openWS,1500); return; }}
+        wsErr=d.error; setStatus(d.error,'b-bad'); return;
+      }}
+      window._wsRetried=false;
       SIDES.forEach(s=>buildSliders(s, d.arms[s].limits, d.arms[s].actual));
       setStatus('연결됨','b-ok');
       btrq.disabled=false; bflw.disabled=false;
@@ -6168,16 +6213,20 @@ async def ws_control(sock: WebSocket):
         await sock.send_text(json.dumps({"type": "init", "error": msg}))
         await sock.close()
         return
-    if (busy_with(("record", "rollout")) or WATCH.on or CALIB.active or MOTORSETUP.active
-            or ARMCHECK.active or VERIFY.active):
-        await sock.send_text(json.dumps({"type": "init", "error": "record/rollout/Setup/Calib 사용 중 — 제어 불가"}))
+    # 시작 요청들(포트 점검·캘리브레이션·확인 등)과 같은 관문을 지나야 — 그쪽이 포트를 여는 중에 제어 탭이 같은 포트를 열지 않게
+    async with _START_GATE:
+        busy_msg, code = "", ""
+        if (busy_with(("record", "rollout")) or WATCH.on or CALIB.active or MOTORSETUP.active
+                or ARMCHECK.active or VERIFY.active):
+            busy_msg = "record/rollout/Setup/Calib 사용 중 — 제어 불가"
+        elif CTL_OWNER is not None:
+            busy_msg, code = "다른 브라우저가 제어 중입니다", "owner"
+        else:
+            CTL_OWNER = sock
+    if busy_msg:
+        await sock.send_text(json.dumps({"type": "init", "error": busy_msg, "code": code}))
         await sock.close()
         return
-    if CTL_OWNER is not None:
-        await sock.send_text(json.dumps({"type": "init", "error": "다른 브라우저가 제어 중입니다"}))
-        await sock.close()
-        return
-    CTL_OWNER = sock
     try:
         try:
             for arm in ARMS.values():
@@ -6875,7 +6924,7 @@ def board_calib_summary(eeprom):
 def file_calib_compare(path, eeprom):
     """캘리브레이션 파일과 EEPROM 값 비교. 반환 (상태, 다른 관절 목록) — 상태: match | mismatch | none | unknown"""
     try:
-        f = json.loads(Path(path).read_text())
+        f = json.loads(P.read_text(path))
     except (OSError, ValueError):
         return "none", []
     if not eeprom:
@@ -8401,7 +8450,8 @@ function stableOf(p){
 function sameDev(a,b){
   if(!a||!b) return false;
   if(a===b) return true;
-  const f=x=>{ const p=PORTS.find(q=>q.dev===x||q.by_id===x||q.by_path===x); return p?p.dev:x; };
+  const f=x=>{ if(/^com[0-9]+$/i.test(x)) x=x.toUpperCase();      /* Windows: 손으로 넣은 com5 = COM5 */
+    const p=PORTS.find(q=>q.dev===x||q.by_id===x||q.by_path===x); return p?p.dev:x; };
   return f(a)===f(b);
 }
 
@@ -9225,8 +9275,8 @@ class CalibSession:
         self.saved = {m: {"homing_offset": c.homing_offset,
                           "range_min": c.range_min, "range_max": c.range_max}
                       for m, c in calib.items()}
+        self._close()                   # 포트를 먼저 닫고 '끝' 으로 (Windows 는 COM 을 한 곳만 열 수 있음)
         self.stage = "done"
-        self._close()
 
     def cancel(self):
         if self.device is not None and self.reset_done and self.old_calib:
@@ -9313,7 +9363,8 @@ def api_calib_export():
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for f in calib_files():
             z.write(CALIB_ROOT / f["dir"] / f"{f['id']}.json", f"{f['dir']}/{f['id']}.json")
-    name = f"openmimic_calib_{os.uname().nodename}_{time.strftime('%Y%m%d_%H%M')}.zip"
+    import platform
+    name = f"openmimic_calib_{platform.node()}_{time.strftime('%Y%m%d_%H%M')}.zip"
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 

@@ -28,6 +28,9 @@ $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $env:PYTHONUTF8 = '1'
+# 다른 파이썬 설치가 남긴 사용자 site-packages(%APPDATA%\Python)·PYTHONPATH 가 conda 환경보다 먼저 잡히지 않게
+$env:PYTHONNOUSERSITE = '1'
+Remove-Item Env:\PYTHONPATH, Env:\PYTHONHOME -ErrorAction SilentlyContinue
 
 # ------------------------------- 설정 ---------------------------------------
 $WorkDir = $PSScriptRoot                                   # 이 레포 (main.py 가 있는 곳)
@@ -136,6 +139,11 @@ if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
 Invoke-Logged 'git' @('--version') | Out-Null
 
 # --------------------------------------------------------------- 1. miniforge
+# 이 환경의 파이썬이 돌고 있으면(OpenMimic·작업) pip 가 쓰는 중인 .pyd/.dll 을 바꾸지 못해 WinError 5 로 실패합니다
+$busyPy = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
+    Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($EnvDir, [System.StringComparison]::OrdinalIgnoreCase) }
+if ($busyPy) { Die "openmimic 환경의 파이썬이 실행 중입니다 (pid $(@($busyPy.ProcessId) -join ',')) — .\openmimic.ps1 stop 과 작업 종료 후 다시 실행하세요" }
+
 Log "1. miniforge 설치"
 $CondaExe = Join-Path $CondaDir 'Scripts\conda.exe'
 if (-not (Test-Path $CondaExe)) {
@@ -154,7 +162,8 @@ Log "2. conda 환경 생성 (python $PyVer)"
 if (Test-Path $Py) {
     Write-Log "환경 이미 존재: $EnvName"
 } else {
-    if ((Invoke-Logged $CondaExe @('create', '-n', $EnvName, "python=$PyVer", '-y', '-q')) -ne 0) { Die "conda 환경 생성 실패" }
+    # -p 로 위치를 고정하고 conda-forge 만 씁니다 — 기존 conda 의 ~\.condarc(envs_dirs·channels)를 따라가지 않게
+    if ((Invoke-Logged $CondaExe @('create', '-p', $EnvDir, "python=$PyVer", '-y', '-q', '--override-channels', '-c', 'conda-forge')) -ne 0) { Die "conda 환경 생성 실패" }
 }
 Enable-CondaEnv
 Invoke-Logged $Py @('-V') | Out-Null
@@ -211,7 +220,7 @@ else:
 '@
 $env:OPENMIMIC_PLATFORM_RESOLVED = $Platform
 Log "3-1. torch 확인 (win-cuda 는 CUDA 인식 필수)"
-if ((Invoke-Py $CheckTorch) -ne 0) { Die "CUDA 미인식. 여기서 멈춥니다" }
+if ((Invoke-Py $CheckTorch) -ne 0) { Die "torch 확인 실패 (위 !! 줄 참고). 여기서 멈춥니다" }
 
 # ------------------------------------------------------------------ 4. LeRobot
 Log "4. LeRobot 소스 (commit $($LerobotCommit.Substring(0, 8)))"
@@ -312,7 +321,7 @@ $torchNote = if ($Platform -eq 'win-intel') { " (torch 휠: $(if ($env:TORCH_LOC
   conda env : $EnvName  (python $PyVer, $EnvDir)
   lerobot   : $LerobotSrc @ $($LerobotCommit.Substring(0, 8))
   데이터    : $DataDir   (HF_HOME=$DataDir\hf → 캘리브레이션은 HF_HOME\lerobot\calibration)
-  활성화    : . $WorkDir\activate.ps1
+  활성화    : powershell -ExecutionPolicy Bypass -NoExit -Command ". '$WorkDir\activate.ps1'"
 
   --- OpenMimic 켜기 ---
   powershell -ExecutionPolicy Bypass -File "$WorkDir\openmimic.ps1" start     # 접속 주소를 알려 줍니다 (stop · status · log · update · autostart on)

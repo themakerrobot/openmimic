@@ -28,6 +28,7 @@ LeRobotDataset.finalize() 가 meta/episodes/ 와 parquet 꼬리(footer)를 씁�
 
 import json
 import logging
+import os
 import re
 import shutil
 from pathlib import Path
@@ -290,7 +291,7 @@ def repair_dataset(root) -> str | None:
             "온전히 저장된 에피소드가 하나도 없습니다 — 남은 파일을 읽을 수 없어 복구할 수 없습니다. 다시 수집하세요.")
 
     for path in truncated:
-        path.rename(path.with_suffix(".parquet.unreadable"))
+        os.replace(path, path.with_suffix(".parquet.unreadable"))     # 같은 이름이 이미 있어도 (Windows 의 rename 은 실패)
 
     lost = recorded_episodes - len(rows)
     if lost > 0:

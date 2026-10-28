@@ -42,6 +42,7 @@
 | `resolve_serial_port` Linux = `os.path.realpath` · 없으면 예외 | Linux 는 받은 문자열을 그대로 돌려줌, 예외 없음. 같은 장치 비교는 `port_key`(= realpath) | 변경 전 Linux 는 by-id 경로를 그대로 lerobot 에 넘겼습니다 (pyserial 이 링크를 따라감). 포트가 없을 때의 오류 문구·실패 힌트도 그대로 두려고 동작을 바꾸지 않았습니다. Windows 는 지시대로 못 찾으면 `PortNotFound` |
 | usb 정보 `{vid, pid, sn, …}` | 키 이름은 기존 그대로 `serial` | 화면 JS·마법사가 `usb.serial` 로 by-id / by-path 를 고릅니다. 이름을 바꾸면 Linux 화면 동작이 달라집니다 |
 | 카메라 안정 식별자 by_path | Windows 는 by_id = by_path = `dshow:<장치 경로>` | DirectShow 장치 경로는 시리얼이 있으면 시리얼 기반, 없으면 Windows 가 USB 위치로 만든 값입니다. 어느 규칙으로 골라도 같은 값이 저장되게 했습니다 |
+| 자동 시작은 작업 스케줄러(`schtasks /SC ONLOGON`) | 시작프로그램 폴더 바로 가기(`.lnk`) | 로그온 트리거 작업은 관리자 권한이 필요하고, 기본값이 'AC 전원일 때만 시작'·낮은 우선순위라 노트북 배터리에서는 켜지지 않고 수집·학습이 느려집니다. 바로 가기는 권한이 필요 없고 경로에 한글이 있어도 됩니다 |
 
 지시서 표에 없던 Linux 의존 지점도 함께 바꿨습니다.
 
@@ -80,13 +81,59 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
   가상 장치는 꺼졌는데 환경은 가상 팔용(`sim-…`)으로 남을 수 있습니다.
 - 고친 방법: `P.replace_file` 이 Windows 에서 최대 2 초까지 잠깐씩 다시 시도합니다.
   읽기도 `P.read_text` 로 잠깐 다시 시도합니다 — 읽기 실패를 '파일 없음' 으로 보고 기본값을 저장하면 설정이 지워지기 때문입니다.
-  `os.replace` 를 쓰던 곳은 모두 바꿨습니다 (설정·환경·캘리브레이션 파일, 수집·롤아웃 상태와 미리보기, 가상 장치 상태, OpenVINO 메타).
+  `os.replace` 를 쓰던 곳은 모두 바꿨습니다 (설정·환경·캘리브레이션 파일, 수집·롤아웃 상태와 미리보기, 가상 장치 상태, OpenVINO 메타, 전원 기록).
+
+## 3-2. 전체 재검토에서 고친 것 (Windows)
+
+코드 전체를 Windows 기준으로 다시 읽어 실제로 문제가 되는 곳만 고쳤습니다.
+
+**COM 포트 — Windows 는 한 곳만 열 수 있음** (Linux 는 여러 곳이 같이 열어도 됨)
+
+- 제어 탭 연결이 다른 시작 요청(포트 점검·캘리브레이션·확인 등)과 같은 관문을 지나게 했습니다. 그쪽이 포트를 여는 중에 제어 탭이 같은 포트를 열지 않습니다.
+- 실행(롤아웃) 시작에 전원 점검 뒤 '사용 중' 재확인을 넣었습니다. 수집 시작과 같습니다.
+- 리더 팔로우를 켜는 중에 제어 탭이 닫히면, 아무도 모르는 리더 포트가 열린 채 남던 문제를 고쳤습니다. 연결과 해제를 잠금으로 묶었고, '사용 중' 판단에 리더 포트도 넣었습니다.
+- 캘리브레이션 끝·모터 ID 세팅 끝·확인 끝에서 '끝' 표시를 포트를 닫은 **뒤**로 옮겼습니다.
+- 셋업 '전체 스캔'(보드레이트 전부)에서 오류가 나도 포트를 닫습니다. lerobot `scan_port` 는 닫지 않습니다.
+- 가상 장치 끄기는 제어 탭·캘리브레이션·포트 감시 등이 쓰는 중이면 막습니다.
+
+**작업 중지**
+
+- '중지'(CTRL_BREAK)는 콘솔 없는 도우미가 작업의 콘솔에 붙어서 보냅니다.
+  `openmimic.ps1 restart`·`update` 뒤에는 서버와 작업의 콘솔이 달라서 직접 보내면 닿지 않습니다.
+- 강제 중지(`taskkill`)의 출력을 시스템 코드 페이지로 읽습니다. UTF-8 로 읽으면 한국어 Windows 에서 오류가 나 중지가 실패했습니다.
+- 클라우드 학습 작업은 `os.execv` 대신 자식으로 돌립니다. Windows `execv` 는 pid 가 바뀌어 OpenMimic 이 작업이 끝났다고 봅니다.
+
+**파일·이름**
+
+- 데이터셋 이름 바꾸기·지우기: 영상이 열려 있으면 통째로 실패하고 안내합니다.
+  예전에는 `shutil.move` 가 복사로 넘어가 데이터셋이 둘로 갈라지고, 지우기는 일부만 지워졌습니다.
+- Windows 가 못 쓰는 이름을 막았습니다: 끝의 `.`, `con`·`nul`·`com1` 같은 예약 이름.
+- 실행 성공률 기록의 키를 `/` 로 통일했습니다. `\` 로 저장돼 모델 화면에 성공률이 안 보였고, 예전 키는 읽을 때 바꿉니다.
+- 캘리브레이션 내보내기(`os.uname` → `platform.node`), 복구 도구의 이름 바꾸기(`os.replace`), 접속 주소 찾기(`hostname -I` 는 Linux 만).
+- 번호로만 잡히는 카메라(pygrabber 없음 등)도 저장할 수 있습니다.
+- 영어 화면에서 경로·장치 이름은 번역하지 않습니다. 사용자 폴더 이름에 한국어가 있으면 사전이 그 글자를 바꿔 경로가 깨졌습니다.
+- 손으로 넣은 `com5` 를 `COM5` 와 같은 포트로 봅니다. COM 목록은 번호 순서로 보여 줍니다.
+- 가상 장치를 끄면 렌더 프레임 머리를 지워, 가상 카메라가 옛 화면에 멈춰 있지 않습니다.
+- 터미널에서 바로 돌리는 도구(`tools_armcheck`·`tools_dxlcheck`·`tools_act2bench`)는 출력과 파일을 UTF-8 로 씁니다.
+
+**설치·실행 스크립트**
+
+- `install.ps1`
+  - 다른 파이썬 설치의 사용자 site-packages·`PYTHONPATH` 를 막습니다 (`PYTHONNOUSERSITE`).
+  - 환경 파이썬이 실행 중이면 설치를 멈춥니다. 쓰는 중인 `.dll` 을 바꾸지 못해 WinError 5 로 깨지기 때문입니다.
+  - `conda create -p … --override-channels -c conda-forge` 를 씁니다. 기존 conda 설정을 따라가지 않게 하려는 것입니다.
+- `openmimic.ps1`
+  - 서버를 `-u` 로 띄워 시작 안내가 로그에 바로 남게 했습니다 (`openmimic.sh` 도).
+  - 서버를 보통 우선순위로 맞춥니다.
+  - git 오류를 따로 안내하고, 끄기 실패를 알립니다.
+  - 자동 시작은 바로 가기로 합니다 (2절).
 
 ## 4. TODO(win-verify) 목록
 
 | 위치 | 확인할 것 |
 |---|---|
-| `openmimic_platform.py` `stop_job` | OpenMimic 을 콘솔 없이(작업 스케줄러·숨김 창) 띄웠을 때 CTRL_BREAK 가 worker 에 닿는지 |
+| `openmimic_platform.py` `_win_break` | 콘솔 없는 도우미가 작업 콘솔에 붙어 CTRL_BREAK 를 전달하는지 (특히 `openmimic.ps1 restart` 뒤 '중지') |
+| `openmimic.ps1` start | Windows 11 에서 기본 터미널이 Windows Terminal 일 때 숨긴 cmd 창이 보이는 창으로 바뀌지 않는지 (보이는 창을 닫으면 서버·작업이 같이 꺼짐) |
 | `openmimic_platform.py` `_win_port_entry` | SO-ARM101 보드(CH343 `1a86:55d3`)에서 pyserial 이 시리얼 번호·USB 위치를 채우는지 |
 | `openmimic_platform.py` `_win_cameras` | DirectShow 나열 순서가 OpenCV `CAP_DSHOW` 인덱스와 같은지. 장치 경로가 재부팅 뒤에도 같은지 (같은 모델 2대) |
 | `openmimic_platform.py` `_dshow_from_ffmpeg` | ffmpeg 목록에서 빠지는 장치('(none)' 가상 카메라 등)가 있을 때 인덱스가 어긋나는지 |
@@ -99,7 +146,7 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
 | `install.ps1` PyAV | Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 있는지 — 수집 영상 인코딩 |
 | `install.ps1` OpenVINO | OpenVINO 가 `CPU GPU NPU` 를 잡는 것은 확인. `openmimic_ov` 변환·NPU 추론은 아직 |
-| `openmimic.ps1` autostart | 관리자 권한 없는 계정에서 ONLOGON 작업 만들기가 되는지 (안 되면 시작프로그램 폴더로 대신) |
+| `openmimic.ps1` autostart | 시작프로그램 바로 가기로 로그인 때 켜지는지 |
 
 ## 5. 단계 5 — lerobot Windows 호환 확인 결과
 

@@ -167,9 +167,18 @@ Windows 에서 따로 챙긴 것:
 
 - **UTF-8 모드**: 작업 worker 에 `PYTHONUTF8=1`(`P.child_env_extra`), 서버는 `openmimic.ps1` 이 `-X utf8` 로 띄웁니다.
   설정·로그·표준출력에 한국어가 많아 Windows 기본 인코딩이면 깨지거나 `UnicodeEncodeError` 로 멈춥니다.
-- **중지 신호**: 작업은 `CREATE_NEW_PROCESS_GROUP` 로 띄우고 `CTRL_BREAK` 를 그 그룹에 보냅니다. 같은 콘솔에 붙어 있어야 닿으므로
-  `openmimic.ps1` 이 서버를 숨은 콘솔(`cmd /c`)로 띄우고, 작업은 그 콘솔을 물려받습니다.
-- **파일 잠금**: 열린 파일은 지울 수 없어 명령 파일은 `P.take_file`(이름 바꾸고 읽기), 렌더 프레임은 같은 크기면 덮어쓰기.
+- **중지 신호**: 작업은 `CREATE_NEW_PROCESS_GROUP` 로 띄우고 `CTRL_BREAK` 를 그 그룹에 보냅니다.
+  `GenerateConsoleCtrlEvent` 는 같은 콘솔에만 닿는데, `openmimic.ps1 restart` 뒤에는 서버(새 숨은 콘솔)와 남은 작업(옛 콘솔)이 갈립니다.
+  그래서 콘솔 없는 도우미 프로세스가 작업 콘솔에 붙어(`AttachConsole`) 보냅니다 (`P._win_break`).
+  lerobot 롤아웃은 SIGINT 처리기만 달아서 `P.forward_break_to_sigint` 로 넘깁니다.
+- **COM 포트는 한 곳만 엶**: Linux 는 같은 tty 를 여러 곳이 열어도 되지만, Windows 는 두 번째 열기가 `Access is denied` 입니다.
+  포트를 여는 시작 요청과 제어 탭 연결은 같은 관문(`_START_GATE`)을 지나고, '사용 중' 플래그는 포트를 닫은 뒤에 내립니다.
+- **파일 잠금**: 열린 파일은 지우거나 바꿔치기할 수 없습니다.
+  - 설정 등 바꿔치기는 `P.replace_file`, 읽기는 `P.read_text` 로 잠깐 다시 시도합니다.
+  - 명령 파일은 `P.take_file`(이름 바꾸고 읽기)로 가져옵니다.
+  - 렌더 프레임은 같은 크기면 덮어씁니다.
+  - 데이터셋 이름 바꾸기·지우기는 `P.move_dir`·`P.remove_dir`(열린 파일이 있으면 통째로 실패)입니다.
+- **이름**: Windows 가 못 쓰는 이름(끝의 `.`, `con`·`nul`·`com1` 등)은 `safe_name` 이 `P.name_ok` 로 막습니다.
 - **롤아웃 CLI 카메라 경로**: `C:\Users\…\openmimic_sim\cam_top` 처럼 역슬래시·공백이 든 경로도 draccus 가 따옴표 없이 그대로 받는 것을 확인했습니다.
 
 ## 셋업 마법사 내부

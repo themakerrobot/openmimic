@@ -29,4 +29,7 @@ $env:CONDA_DEFAULT_ENV = 'openmimic'
 $env:HF_HOME = Join-Path $OpenMimicDir 'data\hf'
 $env:TORCH_HOME = Join-Path $OpenMimicDir 'data\torch'
 $env:PYTHONUTF8 = '1'
+# 다른 파이썬 설치가 남긴 사용자 site-packages(%APPDATA%\Python)·PYTHONPATH 가 이 환경보다 먼저 잡히지 않게
+$env:PYTHONNOUSERSITE = '1'
+Remove-Item Env:\PYTHONPATH, Env:\PYTHONHOME -ErrorAction SilentlyContinue
 Set-Location $OpenMimicDir

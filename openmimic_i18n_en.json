@@ -1538,5 +1538,8 @@
 "activate.ps1 없이 실행한 것 같습니다. OpenMimic 을 끄고 openmimic.ps1 start 로 다시 실행하세요": "it looks like OpenMimic was started without activate.ps1. Stop OpenMimic and start it again with openmimic.ps1 start",
 "install.ps1 로 설치하거나": "install with install.ps1, or",
 "install.ps1 을 다시 돌려도 됩니다": "re-running install.ps1 also works",
-"NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요": "For NPU check the neural processor (Intel AI Boost) driver in Device Manager; for GPU check the Intel graphics driver"
+"NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요": "For NPU check the neural processor (Intel AI Boost) driver in Device Manager; for GPU check the Intel graphics driver",
+"잠시 후 다시 연결합니다…": "Reconnecting in a moment…",
+"지우지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요": "Could not delete — close any screen showing this dataset (video) and try again",
+"이름을 바꾸지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요": "Could not rename — close any screen showing this dataset (video) and try again"
 }

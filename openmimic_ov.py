@@ -66,7 +66,7 @@ def fingerprint(ck):
 
 def load_meta(ck):
     try:
-        return json.loads((ov_dir(ck) / META).read_text())
+        return json.loads(P.read_text(ov_dir(ck) / META))
     except (OSError, ValueError):
         return None
 

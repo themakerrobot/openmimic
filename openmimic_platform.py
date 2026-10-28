@@ -149,20 +149,125 @@ def spawn_job(cmd, env, stdout, cwd) -> subprocess.Popen:
                             stderr=subprocess.STDOUT, env=env, **kw)
 
 
+# Windows CTRL_BREAK 보내기 — GenerateConsoleCtrlEvent 는 '호출한 쪽과 같은 콘솔' 의 프로세스 그룹에만 닿습니다.
+# OpenMimic 을 다시 켜면(openmimic.ps1 restart·update) 서버는 새 콘솔이고, 남아 있던 작업은 옛 콘솔에 있어 직접 보내면 안 닿습니다.
+# 그래서 콘솔 없는 작은 도우미 프로세스가 작업의 콘솔에 붙어(AttachConsole) 그 그룹에 보냅니다.
+_BREAK_HELPER = (
+    "import ctypes, sys\n"
+    "k = ctypes.WinDLL('kernel32', use_last_error=True)\n"
+    "pid = int(sys.argv[1])\n"
+    "k.FreeConsole()\n"
+    "if not k.AttachConsole(pid):\n"
+    "    sys.exit(2)\n"
+    "k.SetConsoleCtrlHandler(None, True)\n"
+    "sys.exit(0 if k.GenerateConsoleCtrlEvent(1, pid) else 3)\n")
+
+
+def _win_break(pid: int) -> None:
+    # TODO(win-verify): 도우미가 다른 콘솔의 작업 그룹에 CTRL_BREAK 를 전달하는지 (restart 뒤 '중지')
+    try:
+        r = subprocess.run([sys.executable, "-c", _BREAK_HELPER, str(pid)], capture_output=True, timeout=15,
+                           creationflags=subprocess.DETACHED_PROCESS)
+        if r.returncode == 0:
+            return
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    os.kill(pid, signal.CTRL_BREAK_EVENT)        # 같은 콘솔이면 직접 (= GenerateConsoleCtrlEvent). 실패하면 OSError
+
+
 def stop_job(pid: int, force: bool) -> None:
     """force=False: 정상 종료 요청 (Linux SIGINT · Windows CTRL_BREAK), force=True: 즉시 종료.
     프로세스 그룹(자식 포함) 전체에 보냅니다. 실패하면 OSError."""
     pid = int(pid)
     if IS_WIN:
         if force:
-            r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True)
+            # taskkill 은 시스템 코드 페이지(cp949 등)로 출력합니다 — UTF-8 모드의 text=True 로 읽으면 UnicodeDecodeError
+            r = subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True,
+                               encoding="oem", errors="replace")
             if r.returncode != 0:
                 raise OSError(r.stderr.strip() or r.stdout.strip() or f"taskkill 실패 ({r.returncode})")
         else:
-            # TODO(win-verify): OpenMimic 을 콘솔 없이(작업 스케줄러·숨김 창) 띄웠을 때 CTRL_BREAK 가 worker 에 닿는지
-            os.kill(pid, signal.CTRL_BREAK_EVENT)        # = GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pid)
+            _win_break(pid)
         return
     os.killpg(os.getpgid(pid), signal.SIGKILL if force else signal.SIGINT)
+
+
+def exec_replace(argv) -> None:
+    """이 프로세스를 argv 로 바꿉니다 (작업 추적이 pid 를 그대로 봄). Linux: os.execv.
+    Windows 의 os.execv 는 새 pid 로 띄우고 지금 프로세스를 끝내 OpenMimic 이 작업이 끝났다고 보므로,
+    자식으로 돌리고 그 종료 코드로 끝냅니다 (같은 프로세스 그룹이라 '중지' 도 그대로 닿음)."""
+    if IS_WIN:
+        forward_break_to_sigint()
+        try:
+            sys.exit(subprocess.call(argv))
+        except KeyboardInterrupt:
+            sys.exit(130)
+    os.execv(argv[0], argv)
+
+
+_WIN_RESERVED = {"con", "prn", "aux", "nul", *(f"com{i}" for i in range(1, 10)), *(f"lpt{i}" for i in range(1, 10))}
+
+
+def name_ok(name: str) -> bool:
+    """폴더·파일 이름으로 쓸 수 있는지 — Windows 는 끝의 '.'(조용히 잘림)과 예약 이름(con·nul·com1 …)을 못 씁니다.
+    Linux 는 항상 True (기존 규칙 그대로)."""
+    if not IS_WIN:
+        return True
+    return not name.endswith((".", " ")) and name.split(".")[0].lower() not in _WIN_RESERVED
+
+
+def lan_ip_command():
+    """이 PC 의 LAN 주소를 알려 주는 명령 (없으면 None — 소켓으로 대신 찾음). Linux: hostname -I."""
+    return None if IS_WIN else ["hostname", "-I"]
+
+
+def utf8_stdio() -> None:
+    """터미널에서 바로 돌리는 도구(tools_*.py)의 표준출력을 UTF-8 로 — Windows 에서 activate.ps1 없이 돌려도 한국어가 깨지지 않게."""
+    if IS_WIN:
+        for st in (sys.stdout, sys.stderr):
+            try:
+                st.reconfigure(encoding="utf-8", errors="replace")
+            except (AttributeError, ValueError):
+                pass
+
+
+def unlink(path, wait: float = 1.0) -> None:
+    """파일 지우기 — Windows 는 다른 쪽이 잠깐 열고 있으면 PermissionError 라 잠깐 다시 시도합니다. 없으면 조용히."""
+    import time
+    end = time.monotonic() + (wait if IS_WIN else 0)
+    while True:
+        try:
+            Path(path).unlink()
+            return
+        except FileNotFoundError:
+            return
+        except PermissionError:
+            if not IS_WIN or time.monotonic() >= end:
+                raise
+            time.sleep(0.03)
+
+
+def move_dir(src, dst) -> None:
+    """폴더 이름 바꾸기 — Linux: shutil.move 그대로. Windows: 같은 드라이브 안에서 rename 만 합니다.
+    (안의 파일이 열려 있으면 shutil.move 가 통째 복사 → 원본 일부만 지움으로 넘어가 데이터셋이 둘로 갈라짐) 실패하면 OSError."""
+    if IS_WIN:
+        os.rename(src, dst)
+        return
+    import shutil
+    shutil.move(str(src), str(dst))
+
+
+def remove_dir(path) -> None:
+    """폴더 통째로 지우기 — Linux: shutil.rmtree 그대로. Windows: 먼저 이름을 바꿔 보고(열린 파일이 있으면 여기서 통째 실패,
+    아무것도 안 지움) 그다음 지웁니다. 일부만 지워진 데이터셋이 남지 않게. 실패하면 OSError."""
+    import shutil
+    if IS_WIN:
+        p = Path(path)
+        tmp = p.with_name(f".{p.name}.del")
+        os.rename(p, tmp)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return
+    shutil.rmtree(path)
 
 
 def job_alive(pid) -> bool:
@@ -228,7 +333,7 @@ def terminate(pid) -> None:
     """프로세스 하나에 정리 후 종료 요청 — Linux SIGTERM, Windows CTRL_BREAK(그 프로세스 그룹).
     작업 기록 없이 pid 만 남은 가상 장치를 끌 때 씁니다. 실패하면 OSError."""
     if IS_WIN:
-        os.kill(int(pid), signal.CTRL_BREAK_EVENT)
+        _win_break(int(pid))
         return
     os.kill(int(pid), signal.SIGTERM)
 
@@ -378,7 +483,7 @@ def list_serial_ports() -> list[dict]:
     by_path 는 물리 USB 포트 기반 식별자. 가상 팔은 포함하지 않습니다 (main.py 가 붙임)."""
     if IS_WIN:
         out = []
-        for p in sorted(_win_comports(), key=lambda x: x.device):
+        for p in sorted(_win_comports(), key=lambda x: (len(x.device), x.device)):      # COM3 이 COM10 보다 앞에
             e = _win_port_entry(p)
             if e:
                 out.append(e)
@@ -486,6 +591,7 @@ if IS_WIN:
         "ov_install": "install.ps1 로 설치하거나 ",
         "reinstall": "install.ps1 을 다시 돌려도 됩니다",
         "ov_driver": "NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요",
+        "pip_extra": ". .\\activate.ps1; cd lerobot-src; pip install -e \".[{extra}]\"",
     }
 else:
     TEXT = {
@@ -506,6 +612,7 @@ else:
         "ov_install": "OPENMIMIC_PLATFORM=intel ./lerobot_conda.sh 로 설치하거나 ",
         "reinstall": "lerobot_conda.sh 를 다시 돌려도 됩니다",
         "ov_driver": "NPU 는 /dev/accel/accel0·드라이버, GPU 는 compute-runtime 설치를 확인하세요",
+        "pip_extra": "cd ~/project/openmimic/lerobot-src && pip install -e \".[{extra}]\"",
     }
 
 
@@ -723,7 +830,8 @@ def camera_key(dev) -> str:
 def camera_path_ok(idx: str) -> bool:
     """문자열 카메라 경로의 모양 — Linux: /dev/…, Windows: dshow:<장치 경로>. (가상 카메라는 main.py 가 따로 봄)"""
     if IS_WIN:
-        return idx.startswith(DSHOW_PREFIX) and len(idx) > len(DSHOW_PREFIX)
+        # 안정 식별자가 없는 카메라(pygrabber·ffmpeg 없음, 장치 경로 없는 소프트웨어 카메라)는 번호 문자열로 옵니다
+        return (idx.startswith(DSHOW_PREFIX) and len(idx) > len(DSHOW_PREFIX)) or idx.isdigit()
     return idx.startswith("/dev/")
 
 
