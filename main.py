@@ -17,6 +17,7 @@
 #   → http://<host>:8080  (기본 인증 없음. OPENMIMIC_TOKEN / OPENMIMIC_AUTH=on 으로 켤 수 있음)
 # ============================================================================
 import asyncio
+import collections
 import contextlib
 import glob
 import html
@@ -8844,6 +8845,15 @@ function renderCurCams(){
     });
   });
   if(!n) t.innerHTML+='<tr><td colspan=7 class=muted>등록된 카메라 없음 — 위에서 스캔 후 추가하세요</td></tr>';
+  // 무압축(YUYV·자동)은 640x480 30fps 한 대가 약 18 MB/s — USB 2.0 하나에 두세 대면 대역폭이 모자라 프레임이 끊깁니다
+  let raw=0;
+  groups.forEach(g=>Object.values(g[0]).forEach(s=>{ if(s.fourcc!=='MJPG') raw++; }));
+  if(n>=2 && raw){
+    const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=7;
+    td.innerHTML='<span class="badge b-warn" style="white-space:normal">형식이 MJPG 가 아닌 카메라 '+raw+' / '+n+'대 — '
+      +'무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).</span>';
+    tr.appendChild(td); t.appendChild(tr);
+  }
 }
 
 /* ---------- 캘리브레이션 상태 ---------- */
@@ -9714,9 +9724,11 @@ class _Preview:
         self.status = status
         self.latest = {}
         self.on = True
+        self.ticks = collections.deque(maxlen=120)    # get_observation 호출 시각 — 실제 수집 주기(Hz) 계산용
         orig = robot.get_observation
 
         def tee():
+            self.ticks.append(time.perf_counter())
             obs = orig()
             for k, v in obs.items():
                 if getattr(v, "ndim", 0) == 3:
@@ -9727,10 +9739,20 @@ class _Preview:
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
 
+    def loop_hz(self):
+        """최근 2초 동안의 실제 루프 주기. 루프가 멈춰 있으면(저장 중 등) None.
+        목표 fps 보다 낮으면 데이터셋 타임스탬프(프레임 번호 / fps)가 실제 시간보다 빨라집니다."""
+        now = time.perf_counter()
+        t = [x for x in list(self.ticks) if now - x <= 2.0]
+        if len(t) < 5 or now - t[-1] > 0.5 or t[-1] <= t[0]:
+            return None
+        return round((len(t) - 1) / (t[-1] - t[0]), 1)
+
     def write_status(self):
         st = dict(self.status)
         if st.get("t0"):
             st["elapsed"] = round(time.time() - st["t0"], 1)
+        st["hz"] = self.loop_hz()
         tmp = self.rd / "status.json.preview.tmp"     # put() 과 다른 임시 파일 (동시 쓰기 섞임 방지)
         tmp.write_text(json.dumps(st))
         P.replace_file(tmp, self.rd / "status.json")
@@ -9770,7 +9792,7 @@ def worker_record(jid):
     status = {"phase": "starting", "episode": None, "recorded": 0,
               "num_episodes": int(spec.get("num_episodes", 0)), "t0": None, "phase_len": 0,
               "elapsed": 0.0, "err": "", "repo_id": spec.get("repo_id", ""), "cams": [],
-              "temp": {}, "maxtemp": None, "last": ""}
+              "temp": {}, "maxtemp": None, "last": "", "fps": int(spec.get("fps") or 0), "hz": None}
     events = {"exit_early": False, "rerecord_episode": False, "stop_recording": False}
     ui = {"start": False}        # 대기 상태에서 '녹화 시작' 을 눌렀는지
 
@@ -10055,7 +10077,9 @@ COLLECT_RUN_HTML = """
       <span>저장됨 <b id=rec>0</b> / 목표 <b id=nep>-</b></span>
       <span>경과 <b id=el>0.0</b>s / <b id=plen>-</b>s</span>
       <span id=lastbox style="display:none">직전 <b id=last></b></span>
+      <span id=hzbox style="display:none">수집 주기 <b id=hz>-</b></span>
     </div>
+    <p id=hzwarn class="badge b-warn" style="display:none;margin-top:8px;white-space:normal"></p>
     <div class=statline id=temps style="margin-top:6px"></div>
     <p id=health class=badge style="display:none;margin-top:8px"></p>
     <p id=err class="badge b-bad" style="display:none;margin-top:10px"></p>
@@ -10175,6 +10199,14 @@ function paint(d){
   }
   if(s.last){ $('lastbox').style.display=''; $('last').textContent=s.last; }
   else { $('lastbox').style.display='none'; }
+  // 실제 수집 주기 — 목표보다 낮으면 영상·관절 타임스탬프가 실제보다 빨라져 학습 데이터가 어긋납니다
+  const live=(ph==='record'||ph==='ready')&&s.hz;
+  $('hzbox').style.display=live?'':'none';
+  if(live) $('hz').textContent=s.hz+' / '+s.fps+' Hz';
+  const slow=live&&s.fps&&s.hz<s.fps*0.9;
+  $('hzwarn').style.display=slow?'':'none';
+  if(slow) $('hzwarn').textContent='수집 주기가 목표('+s.fps+' Hz)보다 낮습니다 ('+s.hz+' Hz) — 저장되는 시간이 실제보다 빨라집니다. '
+    +'카메라 형식을 MJPG 로, 해상도를 낮추거나, 카메라를 다른 USB 포트(컨트롤러)로 나눠 꽂아 보세요.';
   const tb=$('temps'), t=s.temp||{};
   const names=Object.keys(t);
   tb.innerHTML = names.length

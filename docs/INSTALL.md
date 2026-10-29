@@ -78,6 +78,7 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
 | 환경 켜기 | `. .\activate.ps1` (점 + 공백). 실행 정책이 막으면 `powershell -ExecutionPolicy Bypass -NoExit -Command ". .\activate.ps1"` |
 
 ```powershell
+OpenMimic.bat                  # 탐색기에서 더블클릭 = 이 창에서 켜기 (cmd 에서 OpenMimic.bat update · stop · status … 도 됨)
 .\openmimic.ps1 start          # 이 창에서 켜기 — 접속 주소 출력, 로그가 창에 보임, Ctrl+C 로 끔 (작업은 계속, 창을 닫으면 작업도 꺼짐)
 .\openmimic.ps1 background     # 창 없이 켜기 — 로그 openmimic.log, pid openmimic_server.pid
 .\openmimic.ps1 stop           # 끄기 (다른 창·백그라운드로 켠 것도) — 서버만 끄고 작업은 계속
@@ -97,6 +98,13 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
 - 카메라는 DirectShow 로 엽니다. 셋업 → 카메라에 `dshow:\\?\usb#vid_…` 같은 경로로 저장됩니다. 번호(`0`, `1`)로만 보이면
   `pygrabber` 가 없는 것입니다 (`. .\activate.ps1; pip install pygrabber`).
 - 카메라가 안 열리면: 설정 → 개인 정보 → **카메라** 에서 데스크톱 앱 접근을 허용했는지 확인합니다.
+- **카메라 여러 대(양팔 wrist ×2 + top 등)**: 셋업 → 카메라의 **형식을 MJPG** 로 두세요. 자동(대개 YUYV, 무압축)은 640×480 30fps 한 대가
+  약 18 MB/s 라 USB 2.0 하나에 두세 대면 대역폭이 모자라 프레임이 끊기거나 열리지 않습니다. 가능하면 카메라를 서로 다른 USB 컨트롤러(PC 의 다른 쪽 포트)에 나눠 꽂습니다.
+- **수집 주기**: 수집 화면에 실제 주기(`수집 주기 28.9 / 30 Hz`)가 보이고, 목표의 90% 아래면 경고합니다.
+  낮으면 데이터셋 시간(프레임 번호 ÷ fps)이 실제보다 빨라져 학습한 정책이 실제보다 빠르게 움직입니다.
+  Windows 는 에피소드 동안 카메라 프레임을 PNG 로 데이터셋 폴더에 쓰므로(초당 카메라 수 × fps 장), 실시간 검사(Windows Defender)가
+  파일마다 검사해 CPU 를 씁니다. 주기가 모자라면 관리자 PowerShell 에서 이 폴더를 검사 예외로 둘 수 있습니다:
+  `Add-MpPreference -ExclusionPath "$HOME\project\openmimic\data"` (보안 정책상 괜찮은지 먼저 확인하세요).
 
 ## 켜기 · 끄기 · 자동 시작 — `openmimic.sh`
 

@@ -83,6 +83,7 @@ powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
 
 `openmimic.ps1 start` 는 **그 창에서** 켭니다 — 로그가 창에 보이고 Ctrl+C 로 끕니다 (수집·학습 같은 작업은 계속 돎, 창을 닫으면 작업도 꺼짐).
 창 없이 켜려면 `background`. 그 밖의 명령은 `openmimic.sh` 와 같습니다 (`stop · restart · status · log · update · autostart on|off`).
+탐색기에서 **`OpenMimic.bat` 을 더블클릭**해도 켜집니다 (cmd 에서는 `OpenMimic.bat update` 처럼 명령을 붙여 씀).
 cmd 창에서는 `pwsh` 가 없을 수 있으니 위처럼 `powershell` 로 실행하세요.
 처음 켤 때 Windows 방화벽 창이 뜨면 **허용**해야 다른 PC·태블릿에서 접속됩니다.
 

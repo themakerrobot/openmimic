@@ -85,6 +85,7 @@ powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
 
 `openmimic.ps1 start` runs OpenMimic **in that window** — the log shows there and Ctrl+C stops it (jobs such as collection and training keep running; closing the window stops them too).
 Use `background` to run without a window. Other commands are the same as `openmimic.sh` (`stop · restart · status · log · update · autostart on|off`).
+You can also **double-click `OpenMimic.bat`** in Explorer to start it (from cmd, add a command such as `OpenMimic.bat update`).
 In a cmd window `pwsh` may not exist; use `powershell` as above.
 If a Windows Firewall prompt appears the first time, choose **Allow** so other PCs and tablets can connect.
 
