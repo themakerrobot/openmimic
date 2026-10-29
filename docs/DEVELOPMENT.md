@@ -300,6 +300,10 @@ EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 
 
 ## 수집 worker
 
+- **녹화하면서 바로 압축**(lerobot `streaming_encoding`): 수집 화면 체크박스(브라우저에 기억), 기본값 `P.STREAMING_ENCODING_DEFAULT`(Windows 켬, Linux 끔).
+  lerobot 은 인코더 큐가 차면 경고만 남기고 프레임을 버려 영상이 데이터보다 짧아지므로, worker 가 `lerobot.datasets.video_utils` 의
+  `Encoder queue full … dropped` 경고를 세어 빠진 에피소드는 `clear_episode_buffer()` 로 버립니다.
+  시험(4코어 Linux, 640×480 카메라 3대 30fps, 10초): CPU 약 1.6 코어, 빠진 프레임 0, 저장 0.3초 (끄고 스레드 인코딩이면 5.4초).
 - **실제 수집 주기**: `_Preview` 가 `get_observation` 호출 시각을 모아 최근 2초의 주기(`status.hz`)를 씁니다. 수집 화면은 대기·녹화 중에
   `수집 주기 x / fps Hz` 를 보이고 목표의 90% 아래면 경고합니다 — 데이터셋 타임스탬프는 `프레임 번호 / fps` 라 루프가 느리면 실제보다 빨라집니다.
   흔한 원인: 무압축(YUYV) 카메라 여러 대의 USB 대역폭, Windows 실시간 검사가 프레임 PNG 를 검사하는 부하. 셋업은 카메라가 2대 이상이고 MJPG 가 아닌 것이 있으면 경고합니다.

@@ -1585,5 +1585,9 @@
 "대 —": " —",
 "무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).": "they are uncompressed, so with several cameras USB bandwidth may run out and frames may drop or a camera may fail to open. Set the format to MJPG and save (the camera must support MJPG).",
 "모두 MJPG 로": "All to MJPG",
-"카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 셋업 › 카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요.": "The camera does not support that format (MJPG etc.) — set that camera format to Auto in Setup › Cameras."
+"카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 셋업 › 카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요.": "The camera does not support that format (MJPG etc.) — set that camera format to Auto in Setup › Cameras.",
+"녹화하면서 바로 영상 압축": "Compress video while recording",
+"— 에피소드 저장이 거의 바로 끝납니다. CPU 가 못 따라가 프레임이 빠지면 그 에피소드는 저장하지 않고 버립니다": "— saving an episode finishes almost immediately. If the CPU cannot keep up and frames are dropped, that episode is discarded instead of saved",
+"끄면 에피소드마다 카메라 프레임을 PNG 로 쓴 뒤 저장할 때 한꺼번에 압축합니다 (카메라 3대 30초 에피소드면 수십 초 대기)": "When off, camera frames are written as PNG and compressed all at once when saving (tens of seconds for a 30 s episode with 3 cameras)",
+"버림 — 영상 압축이 못 따라가 프레임이 빠짐 (카메라 해상도를 낮추거나 '바로 압축' 을 끄세요)": "Discarded — video compression could not keep up and frames were dropped (lower the camera resolution or turn off compress while recording)"
 }

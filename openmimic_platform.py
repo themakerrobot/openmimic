@@ -57,6 +57,12 @@ def child_env_extra() -> dict:
 
 
 # ============================================================================ 공유 폴더
+# 수집 때 '녹화하면서 바로 영상 압축'(lerobot streaming_encoding) 기본값.
+# Windows 는 끄면 에피소드마다 PNG 수천 장을 쓰고(실시간 검사가 파일마다 검사) 저장 때 한꺼번에 압축해 저장이 수십 초 걸립니다.
+# Linux 는 지금까지와 같게 끔 (수집 화면에서 켤 수 있음).
+STREAMING_ENCODING_DEFAULT = IS_WIN
+
+
 def avoid_spawn_pools() -> None:
     """Windows: 이 프로세스의 ProcessPoolExecutor 를 ThreadPoolExecutor 로 바꿉니다 (수집 worker 에서만 부름).
     lerobot 은 에피소드를 저장할 때마다 카메라 수만큼 ProcessPoolExecutor 로 영상을 인코딩합니다. Windows 는 fork 가 없어(spawn)

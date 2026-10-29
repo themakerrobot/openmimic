@@ -3571,6 +3571,9 @@ def collect_page(resume: str = ""):
         <input id=task value="{esc(task0)}"></label>
       <button class=primary id=bstart onclick="startRec(this)" {'' if ports_configured() and not busy else 'disabled'}>수집 시작</button>
     </div>
+    <p><label title="끄면 에피소드마다 카메라 프레임을 PNG 로 쓴 뒤 저장할 때 한꺼번에 압축합니다 (카메라 3대 30초 에피소드면 수십 초 대기)">
+      <input type=checkbox id=stream {'checked' if CFG.get("streaming_encoding", P.STREAMING_ENCODING_DEFAULT) else ''}>
+      <b>녹화하면서 바로 영상 압축</b> — 에피소드 저장이 거의 바로 끝납니다. CPU 가 못 따라가 프레임이 빠지면 그 에피소드는 저장하지 않고 버립니다</label></p>
     <p class=muted><b>자동으로 녹화되지 않습니다.</b> 시작하면 <b>대기</b> 상태로 들어가고,
     그 화면에서 <b>녹화 시작</b>을 눌러야 그때부터 기록됩니다. 한 에피소드를 끝낼 때마다 다시 대기로 돌아옵니다.<br>
     목표 에피소드 수는 진행률 표시용입니다 — 도달해도 멈추지 않으니 <b>수집 끝내기</b>로 마치세요.
@@ -3585,6 +3588,8 @@ def collect_page(resume: str = ""):
         const sel=document.getElementById('resume_ds'); sel.value=RESUME;
       }});
     }}
+    try{{ const v=localStorage.getItem('omStreamEnc'); if(v!==null) document.getElementById('stream').checked=(v==='1'); }}catch(e){{}}
+    document.getElementById('stream').addEventListener('change',e=>{{ try{{ localStorage.setItem('omStreamEnc', e.target.checked?'1':'0'); }}catch(_){{}} }});
     function modeSw(){{
       const m=document.getElementById('mode').value;
       document.getElementById('f_new').style.display = m==='new'?'':'none';
@@ -3602,6 +3607,7 @@ def collect_page(resume: str = ""):
         resume_ds:document.getElementById('resume_ds')?.value||'',
         num_episodes:document.getElementById('neps').value,
         episode_time_s:document.getElementById('ept').value,
+        streaming_encoding:document.getElementById('stream').checked,
         task:document.getElementById('task').value}};
       const r=await fetch('/api/record',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(b)}});
       const d=await r.json(); if(d.error)alert(d.error); else {{ if(d.warn&&d.warn.length) alert('전원 점검 — 확인하세요\\n\\n'+d.warn.join('\\n')); location.reload(); }}
@@ -3739,7 +3745,7 @@ async def api_record(req: Request):
             "cameras": json.loads(json.dumps(CFG["cameras"])), "fps": int(CFG["fps"]),
             "task": task, "num_episodes": neps, "episode_time_s": ept,
             "repo_id": f"local/{name}", "root": str(DATA_ROOT / name), "resume": resume,
-            "streaming_encoding": bool(CFG.get("streaming_encoding", False)),
+            "streaming_encoding": bool(b.get("streaming_encoding", CFG.get("streaming_encoding", P.STREAMING_ENCODING_DEFAULT))),
             "max_relative_target": mrt_value(CFG.get("max_relative_target"))}
     try:
         jid = start_job("record", [sys.executable, str(Path(__file__).resolve()), "--worker", "record", "{jid}"],
@@ -9811,6 +9817,16 @@ class _Preview:
 def worker_record(jid):
     import logging
     P.avoid_spawn_pools()        # Windows: 에피소드 저장 때 영상 인코딩용 프로세스를 새로 띄우지 않게 (저장이 수십 초 느려짐)
+    # '녹화하면서 바로 압축' 에서 인코더가 못 따라가면 lerobot 은 경고만 남기고 프레임을 버립니다 — 영상이 데이터보다 짧아져
+    # 학습 때 타임스탬프가 어긋나므로, 빠진 프레임이 있는 에피소드는 저장하지 않고 버리려고 경고를 셉니다
+    enc_drops = {"n": 0}
+
+    class _DropCounter(logging.Handler):
+        def emit(self, record):
+            if "dropped" in record.getMessage() and "Encoder queue full" in record.getMessage():
+                enc_drops["n"] += 1
+
+    logging.getLogger("lerobot.datasets.video_utils").addHandler(_DropCounter())
     j = load_json(JOB_DIR / f"{jid}.json", {})
     spec = j.get("spec") or {}
     rd = run_dir(jid)
@@ -10000,6 +10016,7 @@ def worker_record(jid):
                 idle(last)                       # 사람이 '녹화 시작' 을 누를 때까지 기다립니다
                 if events["stop_recording"]:
                     break
+                enc_drops["n"] = 0               # 이 에피소드에서 빠진 프레임만 셉니다
                 put(phase="record", episode=dataset.num_episodes, recorded=recorded,
                     t0=time.time(), phase_len=ept, last="")
                 logging.info(f"Recording episode {dataset.num_episodes}")
@@ -10020,6 +10037,12 @@ def worker_record(jid):
                 if not dataset.has_pending_frames():
                     dataset.clear_episode_buffer()
                     last = "빈 에피소드 — 저장 안 함"
+                    continue
+                if enc_drops["n"]:
+                    logging.warning("영상 인코더가 못 따라가 프레임이 빠졌습니다 — 이 에피소드를 버립니다")
+                    dataset.clear_episode_buffer()
+                    enc_drops["n"] = 0
+                    last = "버림 — 영상 압축이 못 따라가 프레임이 빠짐 (카메라 해상도를 낮추거나 '바로 압축' 을 끄세요)"
                     continue
                 put(phase="saving", t0=None)
                 ts = time.monotonic()
