@@ -115,6 +115,7 @@ CTL_JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wris
 CONTROL_HZ = 20
 FEEDBACK_HZ = 10
 TRACK_WARN_DEG = 6.0      # 명령과 실측이 이만큼 벌어지면 '안 따라옴' 경고
+STUCK_HOLD_S = 1.0        # 그 상태가 이만큼 계속돼야 경고 — 움직이는 동안의 정상적인 지연(한두 주기)은 빼려고
 GOAL_REFRESH_S = 1.0      # 데드밴드 안이어도 이 주기로 목표를 다시 씀 (놓친 명령 복구)
 TEMP_READ_S = 1.0         # 서보 온도 읽기 주기
 NOTE_HOLD_S = 8.0         # 제어 탭 버튼(토크·팔로우) 실패 문구를 보여 주는 시간
@@ -1610,6 +1611,7 @@ class ArmCtl:
         self.err = ""
         self.follow = False
         self.track = {}    # 명령(cmd) 대비 실측 오차 — 서보가 실제로 따라오는지
+        self.track_since = {}  # 관절별로 오차가 기준을 넘기 시작한 시각 (계속 넘는 동안만 유지)
         self.temp = {}     # 서보 온도(°C)
         self.ten = {}      # Torque_Enable 실제 값 (서보가 스스로 토크를 뺐는지)
         self.load = {}     # Present_Load — 버티는 중이면 큽니다
@@ -1664,6 +1666,7 @@ class ArmCtl:
         self.target = dict(self.actual)
         self.cmd = dict(self.actual)
         self.track = dict.fromkeys(CTL_JOINTS, 0.0)
+        self.track_since = {}
         self.temp = {}
         self.ten = {}
         self.load = {}
@@ -1743,6 +1746,13 @@ class ArmCtl:
                         self.track = {n: round(self.actual.get(n, 0.0)
                                                - self.cmd.get(n, self.actual.get(n, 0.0)), 1)
                                       for n in CTL_JOINTS}
+                        # 한 번 벌어진 것으로는 경고하지 않습니다 — 리더를 빠르게 움직이면 서보가 명령보다
+                        # 한두 주기 늦는 것이 정상이라, 순간 오차만 보면 양팔 모두 계속 경고가 뜹니다
+                        for n, e in self.track.items():
+                            if self.torque and abs(e) > track_limit(n):
+                                self.track_since.setdefault(n, t0)
+                            else:
+                                self.track_since.pop(n, None)
                     if t0 - self._last_temp > TEMP_READ_S:
                         self._last_temp = t0
                         # 안 따라가는 원인을 가릅니다:
@@ -1790,6 +1800,7 @@ class ArmCtl:
                 self.target = dict(self.actual)
                 self.cmd = dict(self.actual)
                 self.robot.send_action({f"{k}.pos": v for k, v in self.actual.items()})
+                self.track_since = {}
                 try:
                     self.robot.bus.enable_torque()
                 except Exception as e:
@@ -6019,13 +6030,20 @@ def api_ctlstate():
             "urdf": (URDF_DIR / kind()["urdf"]).exists()}
 
 
+def track_limit(n):
+    """'안 따라옴' 오차 기준 — 각도는 °, OMX 단위(-100~100)는 °로 환산, 그리퍼는 0~100."""
+    return TRACK_WARN_DEG if n == "gripper" else TRACK_WARN_DEG / kind()["deg_per_unit"]
+
+
 def _arms_state():
     out = {}
     for s, a in ARMS.items():
         hot = [n for n, t in a.temp.items() if t >= TEMP_WARN_C]
-        dpu = kind()["deg_per_unit"]          # 오차 기준은 ° — OMX 단위(-100~100)로 환산
-        stuck = ([n for n, e in a.track.items()
-                  if abs(e) > (TRACK_WARN_DEG if n == "gripper" else TRACK_WARN_DEG / dpu)]
+        now = time.monotonic()
+        # STUCK_HOLD_S 동안 계속 벌어진 관절만. 그리퍼는 물체를 쥐면 명령보다 덜 닫히는 게 정상이라,
+        # 서보가 과부하 보호로 토크를 뺀 경우(Torque_Enable=0)만 알립니다
+        stuck = ([n for n, t in list(a.track_since.items())
+                  if now - t >= STUCK_HOLD_S and (n != "gripper" or a.ten.get(n) == 0)]
                  if a.torque else [])
         diag = {}
         for n in stuck:
