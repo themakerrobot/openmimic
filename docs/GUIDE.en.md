@@ -100,7 +100,7 @@ Enter the collection settings and start. **Recording does not start by itself** 
 The home screen. The **Getting started** guide at the top shows the remaining steps (it disappears when done or hidden); the dataset list is below.
 Click a name to open the review screen — all cameras played on one clock, 3D playback and joint graphs.
 
-- ← / → episode, Space play, **, / .** one frame, **X** mark bad → delete in bulk
+- ← / → episode, Space play, **, / .** one frame, **X** mark bad → delete in bulk (edited in place; the original is backed up to `<name>_old`)
 - Download · **Import** from another device · **Repair** an interrupted dataset
 
 | List | Review |
@@ -214,7 +214,8 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | No 3D view | The 3D library ships in the repo's `vendor/` folder, so no internet is needed. Check that the browser supports WebGL (hardware acceleration on) |
 | Using it without internet | Once installed, setup · collect · training · rollout all work offline (the install also downloads ACT's ResNet18 ImageNet weights). Only optional features need internet the first time — the SmolVLA pretrained model, ACT2's DINOv2 backbone, HF Jobs and the Hub. If the web fonts cannot be loaded, system fonts are used |
 | Several cameras drop out | Setup → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
-| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs |
+| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching environments work during training |
+| Collection ends right after starting | Read the error and log left on the collection screen. A new dataset with no saved episodes is removed automatically, so you can start again with the same name |
 | Dataset shows "not finalized" | **Repair** in the dataset list |
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |
 | "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make the setup match training |

@@ -2612,10 +2612,12 @@ def busy_with(kinds):
     return None
 
 
-def robot_busy():
-    """팔(시리얼)을 쓰는 작업: record/rollout + 제어 탭 수동 제어 + Setup 포트 감시"""
-    if ports_held() or CTL_OWNER is not None:
-        return {"id": "manual-control", "kind": "control", "alive": True}
+def robot_busy(control=True):
+    """팔(시리얼)을 쓰는 작업: record/rollout + 제어 탭 수동 제어 + Setup 포트 감시.
+    학습은 팔·환경 설정을 쓰지 않으므로(모델은 시작할 때 프로젝트에 붙음) 셋업·캘리브레이션·환경 전환은 학습 중에도 됩니다.
+    control=False 는 제어 탭 자신이 쓰는 검사 — 제어 탭의 점유는 빼고 봅니다."""
+    if control and (ports_held() or CTL_OWNER is not None):     # 연결 중(약 1초)도 점유로 봅니다
+        return {"id": "manual-control (제어 탭)", "kind": "control", "alive": True}
     if WATCH.on:
         return {"id": "port-watch (셋업 탭)", "kind": "setup", "alive": True}
     if CALIB.active:
@@ -2634,8 +2636,9 @@ def gpu_or_loop_busy():
     return busy_with(("record", "rollout", "train"))
 
 
-def busy_warn_html(busy, what):
-    """'실행 중이라 못 함' 배지. 끝내는 방법을 함께 적고, 풀리면 페이지를 다시 불러 바로 시작할 수 있게 합니다."""
+def busy_warn_html(busy, what, scope="all"):
+    """'실행 중이라 못 함' 배지. 끝내는 방법을 함께 적고, 풀리면 페이지를 다시 불러 바로 시작할 수 있게 합니다.
+    scope 는 /api/busy 가 볼 범위 — 페이지가 막힌 조건과 같아야 합니다 (all: 수집·추론, control: 제어 탭)."""
     if not busy:
         return ""
     how = ""
@@ -2645,30 +2648,19 @@ def busy_warn_html(busy, what):
     elif busy.get("kind") in ("record", "rollout", "train"):
         how = ' <a href="/jobs">작업</a> 탭에서 중지할 수 있습니다.'
     return (f'<p class="badge b-warn" style="white-space:normal">실행 중: {esc(busy["id"])} — 끝나야 {what} 수 있습니다.{how}</p>'
-            '<script>(function(){const t=setInterval(async()=>{try{const r=await (await fetch("/api/busy",{cache:"no-store"})).json();'
+            f'<script>(function(){{const t=setInterval(async()=>{{try{{const r=await (await fetch("/api/busy?scope={scope}",{{cache:"no-store"}})).json();'
             'if(!r.busy){clearInterval(t);location.reload();}}catch(e){}},2000);})();</script>')
 
 
 @app.get("/api/busy")
-def api_busy():
-    b = exclusive_busy()
+def api_busy(scope: str = "all"):
+    b = robot_busy(control=False) if scope == "control" else exclusive_busy()
     return {"busy": b["id"] if b else ""}
 
 
 def exclusive_busy():
-    if ports_held() or CTL_OWNER is not None:     # 연결 중(약 1초)도 점유로 봅니다
-        return {"id": "manual-control (제어 탭)", "kind": "control", "alive": True}
-    if WATCH.on:
-        return {"id": "port-watch (셋업 탭)", "kind": "setup", "alive": True}
-    if CALIB.active:
-        return {"id": "calibration (캘리브레이션 탭)", "kind": "calib", "alive": True}
-    if MOTORSETUP.active:
-        return {"id": "motor-id-setup (셋업 탭)", "kind": "setup", "alive": True}
-    if ARMCHECK.active:
-        return {"id": "arm-check (셋업 탭)", "kind": "setup", "alive": True}
-    if VERIFY.active:
-        return {"id": "verify (셋업 마법사)", "kind": "setup", "alive": True}
-    return busy_with(("record", "rollout", "train"))
+    """수집·추론 시작을 막는 작업 — 팔을 쓰는 작업 + 학습 (학습이 CPU·GPU 를 잡아 수집 주기가 밀림)"""
+    return robot_busy() or busy_with(("train",))
 
 
 # ----------------------------- 화면 공통 ------------------------------------
@@ -3050,7 +3042,7 @@ async def api_project_save(req: Request):
         if _env_file(name).exists():
             return JSONResponse({"error": f"같은 이름의 환경 '{name}' 이 이미 있습니다 — 다른 프로젝트 이름을 쓰거나 "
                                           "셋업 › 환경에서 그 환경을 지운 뒤 만드세요"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy and (b.get("activate") or (old and name != old and d["projects"][old].get("env") == env_name())):
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
     if not old:
@@ -3093,7 +3085,7 @@ async def api_project_activate(req: Request):
     env = d["projects"][name].get("env", "") if name else ""
     if env and env != env_name():
         # 프로젝트를 열면 그 프로젝트의 환경(포트·캘리브레이션·카메라)으로 바꿉니다. 환경 파일이 지워졌으면 빈 환경을 다시 만듭니다
-        busy = exclusive_busy()
+        busy = robot_busy()
         if busy:
             return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 여세요 (프로젝트를 열면 환경이 바뀝니다)"},
                                 status_code=400)
@@ -3121,7 +3113,7 @@ async def api_project_delete(req: Request):
            and not any(p.get("env") == env for n, p in d["projects"].items() if n != name))
     note = ""
     if own:
-        busy = exclusive_busy() if env == env_name() else None
+        busy = robot_busy() if env == env_name() else None
         if busy:
             return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 지우세요"}, status_code=400)
         try:
@@ -4467,6 +4459,9 @@ async def api_train(req: Request):
     root = DATA_ROOT / ds
     if not root.exists():
         return JSONResponse({"error": "dataset not found"}, status_code=400)
+    busy = dataset_busy(ds)      # 에피소드 삭제·복구·업로드 중인 데이터셋으로 학습하면 중간 상태를 읽습니다
+    if busy:
+        return JSONResponse({"error": f"{busy['id']} 가 이 데이터셋을 쓰는 중"}, status_code=400)
     pargs, perr, _ = policy_train_args(pol, root, b.get("opts"))
     if perr:
         return JSONResponse({"error": perr}, status_code=400)
@@ -5795,7 +5790,11 @@ async def api_delete_checkpoint(req: Request):
     if (not run.strip("/") or not _within(target, OUT_ROOT) or target == OUT_ROOT.resolve()
             or not target.exists()):
         return JSONResponse({"error": "대상 없음"}, status_code=400)
-    await asyncio.to_thread(shutil.rmtree, target)     # 수 GB 면 수 초 — 이벤트 루프(E-STOP 포함)를 막지 않게
+    try:
+        await asyncio.to_thread(P.remove_dir, target)     # 수 GB 면 수 초 — 이벤트 루프(E-STOP 포함)를 막지 않게
+    except OSError as e:      # Windows: 다른 프로그램(탐색기·변환 중 등)이 파일을 열고 있으면 실패 — 아무것도 지우지 않음
+        return JSONResponse({"error": f"지우지 못했습니다 — 이 폴더의 파일을 연 프로그램을 닫고 다시 하세요 ({e})"},
+                            status_code=400)
     if scope == "run":
         assign_to_project("models", run, "")
     return {"ok": True}
@@ -5804,16 +5803,11 @@ async def api_delete_checkpoint(req: Request):
 # ----------------------------- 페이지: Control (수동 제어) --------------------
 @app.get("/control", response_class=HTMLResponse)
 def control_page():
-    busy = busy_with(("record", "rollout")) or (
-        {"id": "port-watch (셋업 탭)"} if WATCH.on else None) or (
-        {"id": "calibration (캘리브레이션 탭)"} if CALIB.active else None) or (
-        {"id": "motor-id-setup (셋업 탭)"} if MOTORSETUP.active else None) or (
-        {"id": "arm-check (셋업 탭)"} if ARMCHECK.active else None) or (
-        {"id": "verify (셋업 마법사)"} if VERIFY.active else None)
+    busy = robot_busy(control=False)
     if busy:
         return f"""{CSS}{nav_html('ct')}<div class=wrap>
         <p class=eyebrow>수동 제어</p><h2>제어</h2>
-        <p class="badge b-warn">실행 중: {esc(busy["id"])} — 끝나야 수동 제어를 쓸 수 있습니다</p></div>"""
+        {busy_warn_html(busy, "수동 제어를 쓸", scope="control")}</div>"""
     if not ports_configured():
         return f"""{CSS}{nav_html('ct')}<div class=wrap>
         <p class=eyebrow>수동 제어</p><h2>제어</h2>
@@ -6617,7 +6611,7 @@ def setup_page():
 
 @app.get("/api/setup/state")
 def api_setup_state():
-    busy = exclusive_busy()
+    busy = robot_busy()
     return {"config": CFG, "ports": list_serial_ports(), "calib": calib_status(),
             "busy": f"{busy['id']} 실행 중" if busy else "", "platform": P.platform_name()}
 
@@ -6642,7 +6636,7 @@ async def api_setup_probe(req: Request):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
     if WATCH.on:
         return JSONResponse({"error": "포트 감시 중에는 probe 불가 — 감시를 먼저 중지하세요"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
     try:
@@ -6657,7 +6651,7 @@ async def api_setup_watch_start(req: Request):
     ports = [p for p in (b.get("ports") or []) if serial_path_ok(p)]
     if not ports:
         return JSONResponse({"error": "감시할 포트가 없습니다"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
     await asyncio.to_thread(WATCH.start, ports[:8])
@@ -6695,7 +6689,7 @@ async def api_motors_start(req: Request):
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
     try:
@@ -6737,7 +6731,7 @@ async def api_armcheck_start(req: Request):
     if not serial_path_ok(port):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
     role = b.get("role") if b.get("role") in ("leader", "follower") else ""
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
     try:
@@ -6815,7 +6809,7 @@ def wizard_state():
                 "board": {"calib": board_calib_summary(ee), "file": fcmp, "diff": fdiff},
                 "verified": v.get("verified") if fresh else None,
                 "verified_stale": bool(v.get("verified")) and not fresh})
-    busy = exclusive_busy()
+    busy = robot_busy()
     k = kind()
     return {"robot": robot_key(), "robot_label": k["label"], "calib_kind": k["calib"], "unit": k["unit"],
             "robots": {r: v["label"] for r, v in ROBOT_KINDS.items()},
@@ -6837,7 +6831,7 @@ async def api_wizard_assign(req: Request):
     side, role, dev = b.get("side"), b.get("role"), (b.get("dev") or "").strip()
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 지정하세요"}, status_code=400)
     pe = _port_entry(list_serial_ports(), dev)
@@ -6865,7 +6859,7 @@ async def api_wizard_verify_start(req: Request):
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
     await asyncio.to_thread(VERIFY.stop)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중"}, status_code=400)
     try:
@@ -7004,7 +6998,7 @@ async def api_wizard_import_calib(req: Request):
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
     try:
@@ -7082,7 +7076,7 @@ async def api_wizard_mode(req: Request):
     mode = b.get("mode")
     if mode not in ("single", "bimanual"):
         return JSONResponse({"error": "mode 는 single 또는 bimanual"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 바꾸세요"}, status_code=400)
     cfg, plan = convert_mode(CFG, mode)
@@ -7122,7 +7116,7 @@ async def api_wizard_robot(req: Request):
     robot = b.get("robot")
     if robot not in ROBOT_KINDS:
         return JSONResponse({"error": f"robot 은 {' / '.join(ROBOT_KINDS)} 중 하나"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 바꾸세요"}, status_code=400)
     cfg = convert_robot(CFG, robot)
@@ -7143,7 +7137,7 @@ def wizard_page():
 
 @app.post("/api/setup/config")
 async def api_setup_config(req: Request):
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 저장하세요"}, status_code=400)
     b = await req.json()
@@ -7197,7 +7191,7 @@ def api_envs():
 
 async def _env_op(fn, *args, needs_idle=True):
     if needs_idle:
-        busy = exclusive_busy()
+        busy = robot_busy()
         if busy:
             return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
     try:
@@ -7228,7 +7222,9 @@ async def api_env_rename(req: Request):
 @app.post("/api/envs/delete")
 async def api_env_delete(req: Request):
     b = await req.json()
-    return await _env_op(delete_env, (b.get("name") or "").strip(), needs_idle=False)
+    name = (b.get("name") or "").strip()
+    # 쓰는 중인 환경을 지우면 다른 환경으로 바뀌므로, 팔을 쓰는 작업이 있으면 막습니다
+    return await _env_op(delete_env, name, needs_idle=(name == env_name()))
 
 
 # 영상 한 프레임을 캔버스에 그려 썸네일로 씁니다. 서버에서 디코딩하지 않으므로
@@ -7527,7 +7523,7 @@ REVIEW_HTML = """
   <div class=eplist id=eplist></div>
 </div>
 <p class=muted style="margin-top:12px">&larr; / &rarr; 이전·다음 에피소드 · Space 재생/정지 · <b>,</b> / <b>.</b> 한 프레임 앞뒤 · X 불량 표시.
-불량으로 표시한 에피소드는 위의 <b>삭제 실행</b>으로 한 번에 지웁니다 (결과는 새 폴더, 원본 유지).
+불량으로 표시한 에피소드는 위의 <b>삭제 실행</b>으로 한 번에 지웁니다 (제자리에서 고치고, 원본은 이름 뒤에 _old 를 붙인 폴더로 백업).
 그래프는 observation.state(실측)입니다 — 한 관절이 평평하게 멈춰 있거나 갑자기 튀면 그 에피소드를 의심하세요.
 <b>짧음</b>은 길이가 중앙값의 절반도 안 되는 에피소드입니다.</p>
 </div>
@@ -7730,7 +7726,7 @@ $('b_ren').onclick=async()=>{
 };
 $('b_delm').onclick=async()=>{
   const n=INFO.marks.length;
-  if(!confirm('불량으로 표시한 '+n+'개 에피소드를 지웁니다. 결과는 새 폴더로 만들어지고 원본은 남습니다. 진행할까요?')) return;
+  if(!confirm('불량으로 표시한 '+n+'개 에피소드를 지웁니다. 이 데이터셋을 제자리에서 고치고, 원본은 '+DS+'_old 폴더에 백업합니다. 진행할까요?')) return;
   const r=await jpost('/api/delete/'+encodeURIComponent(DS));
   if(r.error){ alert(r.error); return; }
   location.href='/jobs';
@@ -9373,7 +9369,7 @@ async def api_calib_delete(req: Request):
     d, cid = b.get("dir") or "", b.get("id") or ""
     if d not in CALIB_DIRS or not safe_name(cid):
         return JSONResponse({"error": "폴더·캘리브 id 가 잘못됐습니다"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 지우세요"}, status_code=400)
     f = CALIB_ROOT / d / f"{cid}.json"
@@ -9405,7 +9401,7 @@ async def api_calib_import(req: Request, overwrite: int = 0):
     """내보낸 zip 을 받아 같은 폴더에 넣습니다. 알려진 폴더(robots/so_follower 등)·안전한 이름·캘리브레이션 형식만 받고,
     이미 있는 다른 내용의 파일은 overwrite=1 일 때만 .bak 을 남기고 덮어씁니다."""
     import io
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 가져오세요"}, status_code=400)
     raw = b""
@@ -9460,7 +9456,7 @@ async def api_calib_import(req: Request, overwrite: int = 0):
 def api_calib_state():
     st = CALIB.state()
     st["devices"] = calib_status()
-    busy = exclusive_busy() if not CALIB.active else None
+    busy = robot_busy() if not CALIB.active else None
     st["busy"] = f"{busy['id']} 실행 중" if busy else ""
     st["ports_configured"] = ports_configured()
     st["calib_kind"] = kind()["calib"]
@@ -9474,7 +9470,7 @@ async def api_calib_start(req: Request):
     side, role = b.get("side"), b.get("role")
     if role not in ("follower", "leader") or side not in ARM_CFGS:
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
     try:
@@ -9527,7 +9523,7 @@ async def api_calib_factory(req: Request):
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
-    busy = exclusive_busy()
+    busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
     try:
@@ -10222,8 +10218,27 @@ def worker_record(jid):
             except Exception as e:
                 logging.exception("finalize failed")
                 put(err=f"finalize: {e}")
+        _drop_empty_new_dataset(spec)
         put(phase="error" if rc else "done")
     return rc
+
+
+def _drop_empty_new_dataset(spec):
+    """새로 만든 데이터셋에 저장된 에피소드가 하나도 없으면 폴더를 지웁니다 — 연결 실패 등으로 바로 끝났을 때
+    빈 데이터셋이 남아 같은 이름으로 다시 시작하지 못하는 일을 막습니다. 이어서 수집(resume)은 건드리지 않습니다."""
+    if spec.get("resume") or not spec.get("root"):
+        return
+    root = Path(spec["root"])
+    if not root.is_dir() or root.parent.resolve() != DATA_ROOT.resolve():
+        return
+    info = load_json(root / "meta/info.json", {})
+    if info.get("total_episodes", 0):
+        return
+    try:
+        P.remove_dir(root)
+        print(f"[openmimic] 저장된 에피소드가 없어 빈 데이터셋 폴더를 지웠습니다: {root.name}", flush=True)
+    except OSError as e:
+        print(f"[openmimic] 빈 데이터셋 폴더를 지우지 못했습니다 ({root.name}): {e}", flush=True)
 
 
 def worker_main(kind, jid):
@@ -10282,6 +10297,8 @@ COLLECT_RUN_HTML = """
     <div class=statline id=temps style="margin-top:6px"></div>
     <p id=health class=badge style="display:none;margin-top:8px"></p>
     <p id=err class="badge b-bad" style="display:none;margin-top:10px"></p>
+    <p id=ended style="display:none;margin-top:10px">수집 작업이 끝났습니다 — 위 메시지와 아래 로그를 확인하세요.
+      <button onclick="location.href='/collect'">수집 화면으로</button></p>
   </div>
   <div class=cams id=cams></div>
   <div class=bigkeys id=keys_ready style="display:none">
@@ -10347,7 +10364,7 @@ function buildCams(names){
   camsBuilt=names.length>0;
 }
 /* 폴링이 실패하면 조용히 죽지 않고 무엇이 막혔는지 화면에 적고 다음 주기에 다시 시도합니다. */
-let failN=0, polling=false;
+let failN=0, polling=false, ENDED=false;
 function paint(d){
   const s=d.status||{};
   const ph=s.phase||'starting';
@@ -10369,8 +10386,8 @@ function paint(d){
   $('repo').textContent = s.repo_id||'';
   $('rbadge').textContent = ph==='record' ? 'recording' : ph;
   $('rbadge').className = 'badge '+(ph==='record'?'b-bad':ph==='ready'?'b-warn':'b-run');
-  $('keys_ready').style.display = ph==='ready' ? '' : 'none';
-  $('keys_rec').style.display   = ph==='record' ? '' : 'none';
+  $('keys_ready').style.display = ph==='ready' && d.alive ? '' : 'none';
+  $('keys_rec').style.display   = ph==='record' && d.alive ? '' : 'none';
   if(PREP[ph]){
     const el = s.elapsed||0;
     $('hint').innerHTML = (ph==='importing'
@@ -10423,10 +10440,17 @@ function paint(d){
   if(s.err){ $('err').style.display=''; $('err').textContent=s.err; } else { $('err').style.display='none'; }
   if(!camsBuilt && s.cams && s.cams.length) buildCams(s.cams);
   $('tail').textContent=d.tail||'';
-  if(!d.alive){ setTimeout(()=>location.reload(),1200); }
+  if(!d.alive){
+    // 정상 완료면 수집 화면으로 돌아가고, 오류·서보 이상·비정상 종료면 이유를 읽을 수 있게 이 화면에 남습니다
+    if(ph==='done' && !s.health_stop && !s.err) setTimeout(()=>location.reload(),1200);
+    else if(!ENDED){
+      ENDED=true; $('ended').style.display='';
+      if(ph!=='error' && ph!=='done'){ $('phase').textContent='중단됨 (비정상 종료)'; $('phase').className='phase error'; }
+    }
+  }
 }
 async function refresh(){
-  if(polling) return;                 /* 느려도 요청이 쌓이지 않게 */
+  if(polling||ENDED) return;          /* 느려도 요청이 쌓이지 않게 · 끝난 작업은 더 묻지 않음 */
   polling=true;
   let d;
   try{

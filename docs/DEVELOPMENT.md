@@ -317,6 +317,12 @@ EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 
 
 worker ↔ 웹은 파일로 통신합니다 (`/dev/shm/openmimic/<jid>/`): `status.json`(상태), `cam_<name>.jpg`(미리보기), `cmd`(s/n/r/q).
 미리보기 JPEG 은 가로 480 px 이하로 줄이고(`PREVIEW_W`), 새 프레임이 없으면 다시 쓰지 않습니다 — 원본 해상도는 데이터셋에만 들어갑니다.
+새로 만든 데이터셋에 저장된 에피소드가 0개로 끝나면(연결 실패 등) worker 가 폴더를 지웁니다(`_drop_empty_new_dataset`) — 같은 이름으로 바로 다시 시작할 수 있게.
+수집 화면은 작업이 오류·서보 이상·비정상 종료로 끝나면 새로고침하지 않고 메시지와 로그를 남깁니다.
+
+작업 점유 검사: `robot_busy()` 는 팔을 쓰는 것(제어 탭·셋업 감시·캘리브레이션·수집·실행)만, `exclusive_busy()` 는 여기에 학습을 더합니다.
+수집·실행 시작은 `exclusive_busy()`, 셋업·캘리브레이션·환경/프로젝트 전환은 `robot_busy()`, 제어 탭은 `robot_busy(control=False)` 로 봅니다.
+`busy_warn_html(..., scope=)` 의 배너는 `/api/busy?scope=` 로 같은 조건을 폴링해 풀리면 새로고침합니다.
 그래서 OpenMimic 을 재시작해도 진행 중인 수집에 다시 붙습니다.
 
 - **대기(ready)** 는 `record_loop(dataset=None)` — 기록 없이 리더만 따라갑니다. 녹화는 `s` 를 눌렀을 때만

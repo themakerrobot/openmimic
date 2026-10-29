@@ -259,7 +259,6 @@
 "개 ≠ 지금 구성": " ≠ current setup",
 "개 복구": "recovered",
 "개 삭제 실행": " · delete",
-"개 에피소드를 지웁니다. 결과는 새 폴더로 만들어지고 원본은 남습니다. 진행할까요": " episodes will be deleted. The result is created as a new folder and the original is kept. Proceed",
 "개 응답합니다 (ID": "respond (ID",
 "개 파일": "files",
 "개는 .unreadable 로 옮겼습니다": "moved to .unreadable",
@@ -814,7 +813,6 @@
 "위험한 경로": "Unsafe path",
 "으로 보드레이트를 찾으세요": " to find the baud rate",
 "으로 올라갑니다. 같은 이름이 있으면 바뀐 파일만 갱신합니다": ". If the name exists, only changed files are updated",
-"으로 한 번에 지웁니다 (결과는 새 폴더, 원본 유지": " to delete them all at once (result in a new folder, original kept",
 "은 CUDA GPU 용입니다 — 이 기기에서 GPU 를 찾지 못해 매우 느리거나 메모리가 부족할 수 있습니다": " is meant for a CUDA GPU — no GPU was found on this device, so it may be very slow or run out of memory",
 "은 길이가 중앙값의 절반도 안 되는 에피소드입니다": " means an episode shorter than half the median length",
 "은 범위 기록 캘리브레이션이 없습니다": "has no range-recording calibration",
@@ -1594,5 +1592,14 @@
 "다른 기기·브라우저에 제어 탭이 열려 있으면 거기서 닫으세요.": "If the Control tab is open on another device or browser, close it there.",
 "탭에서 중지할 수 있습니다.": "tab can stop it.",
 "로 학습합니다 — 내장 GPU 라 느립니다": " will be used for training — an integrated GPU is slow",
-"(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초). 긴 학습은 실행 위치를 HF 작업으로 고르세요": "(about 2.3 s per step on an Arc 140V · ACT · 3 cameras · batch 8). For long training choose HF Jobs as the run location"
+"(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초). 긴 학습은 실행 위치를 HF 작업으로 고르세요": "(about 2.3 s per step on an Arc 140V · ACT · 3 cameras · batch 8). For long training choose HF Jobs as the run location",
+"지우지 못했습니다 — 이 폴더의 파일을 연 프로그램을 닫고 다시 하세요": "Could not delete — close any program using files in this folder and try again",
+"으로 한 번에 지웁니다 (제자리에서 고치고, 원본은 이름 뒤에 _old 를 붙인 폴더로 백업": " to delete them all at once (edited in place; the original is backed up to a folder named with _old appended",
+"개 에피소드를 지웁니다. 이 데이터셋을 제자리에서 고치고, 원본은": " episodes will be deleted. The dataset is edited in place and the original is backed up to the folder",
+"_old 폴더에 백업합니다. 진행할까요": "_old. Proceed",
+"수집 작업이 끝났습니다 — 위 메시지와 아래 로그를 확인하세요.": "The recording job has ended — check the message above and the log below.",
+"수집 화면으로": "Back to Collect",
+"중단됨 (비정상 종료": "Stopped (abnormal exit",
+"저장된 에피소드가 없어 빈 데이터셋 폴더를 지웠습니다": "No episodes were saved, so the empty dataset folder was removed",
+"빈 데이터셋 폴더를 지우지 못했습니다": "Could not remove the empty dataset folder"
 }
