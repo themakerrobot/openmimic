@@ -719,11 +719,21 @@ def _dshow_from_ffmpeg():
     return devs or None
 
 
-def dshow_devices():
-    """Windows DirectShow 카메라 목록 [{"name", "path"}] — pygrabber, 안 되면 ffmpeg. 둘 다 안 되면 None."""
+_DSHOW_CACHE = {"t": -1e9, "devs": None}
+DSHOW_CACHE_S = 10.0      # 카메라 여러 대를 연달아 열 때(제어 탭·수집·실행 시작) 대마다 목록을 새로 만들지 않게
+
+
+def dshow_devices(fresh: bool = False):
+    """Windows DirectShow 카메라 목록 [{"name", "path"}] — pygrabber, 안 되면 ffmpeg. 둘 다 안 되면 None.
+    목록 만들기는 별도 파이썬·ffmpeg 를 띄워 0.5~2 초 걸려서, 셋업의 카메라 스캔(fresh=True)이 아니면 10 초 동안 재사용합니다."""
+    import time
+    now = time.monotonic()
+    if not fresh and _DSHOW_CACHE["devs"] is not None and now - _DSHOW_CACHE["t"] < DSHOW_CACHE_S:
+        return _DSHOW_CACHE["devs"]
     devs = _dshow_from_pygrabber()
     if devs is None:
         devs = _dshow_from_ffmpeg()
+    _DSHOW_CACHE.update(t=now, devs=devs)
     return devs
 
 
@@ -743,7 +753,7 @@ def _win_cameras():
     """Windows: DirectShow 장치 순서 = OpenCV CAP_DSHOW 인덱스. 안정 식별자는 DirectShow 장치 경로
     (보드 시리얼이 있으면 시리얼 기반, 없으면 USB 위치 기반으로 Windows 가 만든 값)."""
     import cv2
-    devs = dshow_devices()
+    devs = dshow_devices(fresh=True)        # 셋업 스캔은 늘 새로
     found = []
     if devs is None:
         # TODO(win-verify): pygrabber·ffmpeg 둘 다 없으면 인덱스만 — 재부팅·재연결 때 순서가 바뀔 수 있음

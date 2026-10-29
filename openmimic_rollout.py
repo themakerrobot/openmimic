@@ -24,6 +24,7 @@ from pathlib import Path
 import openmimic_platform as P
 
 PREVIEW_FPS = 10
+PREVIEW_W = 480         # 미리보기 JPEG 최대 가로(px) — 원본 해상도는 데이터셋에만
 
 
 def say(*a):
@@ -183,12 +184,20 @@ class Monitor:
             import cv2
         except ImportError:
             cv2 = None
+        sent = {}
         while self.on:
             t0 = time.monotonic()
             try:
                 self.write()
                 if cv2 is not None:
                     for k, frame in list(self.frames.items()):
+                        if sent.get(k) is frame:        # 새 프레임이 없으면(저장 중 등) 다시 인코딩하지 않습니다
+                            continue
+                        sent[k] = frame
+                        h, w = frame.shape[:2]
+                        if w > PREVIEW_W:               # 미리보기는 작게 — 인코딩·디스크 쓰기 부담을 줄입니다
+                            frame = cv2.resize(frame, (PREVIEW_W, max(1, h * PREVIEW_W // w)),
+                                               interpolation=cv2.INTER_AREA)
                         ok, buf = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
                                                [cv2.IMWRITE_JPEG_QUALITY, 60])
                         if ok:

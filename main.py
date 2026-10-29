@@ -19,6 +19,7 @@
 import asyncio
 import collections
 import contextlib
+import functools
 import glob
 import html
 import json
@@ -125,6 +126,7 @@ MAX_STEP_DEG = 2.5        # 슬라이더 제어 시 스텝당 최대 이동
 FOLLOW_STEP_DEG = 6.0     # 리더 팔로우 시 스텝당 최대 이동 (반응성↑)
 CTL_STREAM_FPS = 15
 PREVIEW_FPS = 10          # record worker 가 미리보기 JPEG 을 갱신하는 주기
+PREVIEW_W = 480           # 미리보기 JPEG 최대 가로(px) — 원본 해상도는 데이터셋에만
 READY_CHUNK_S = 2.0       # 수집 대기 중 record_loop 을 끊어 도는 단위 (이 틈에 온도를 읽습니다)
 NAME_RE = re.compile(r"[A-Za-z0-9._-]+")
 # record worker ↔ 웹 사이의 상태/미리보기/명령 파일. 초당 수십 회 쓰므로 tmpfs 를 우선합니다.
@@ -359,15 +361,50 @@ DEFAULT_LANG = "en" if os.environ.get("OPENMIMIC_LANG", "").lower().startswith("
 _I18N = {"mtime": None, "rx": None, "map": {}}
 
 
+def _trie_pattern(keys):
+    """낱말들을 접두사 나무(trie) 모양의 정규식 하나로. 'A|AB|ABC…' 를 길이순으로 늘어놓은 것과 같은 것을 찾되
+    (같은 자리에서 가장 긴 낱말), 1,600개 낱말을 한 글자씩 모두 시험하지 않아 영어 화면 번역이 몇 배 빠릅니다."""
+    trie = {}
+    for k in keys:
+        node = trie
+        for ch in k:
+            node = node.setdefault(ch, {})
+        node[""] = {}
+
+    def build(node):
+        lit = []
+        while "" not in node and len(node) == 1:      # 갈림길이 없는 구간은 글자를 그대로 이어 붙입니다 (괄호 깊이를 줄임)
+            ch, node = next(iter(node.items()))
+            lit.append(re.escape(ch))
+        alts = [re.escape(ch) + build(sub) for ch, sub in node.items() if ch]
+        if not alts:
+            tail = ""
+        elif "" in node:
+            tail = "(?:" + "|".join(alts) + ")?"         # 더 긴 낱말을 먼저(욕심), 안 되면 여기서 끝
+        else:
+            tail = alts[0] if len(alts) == 1 else "(?:" + "|".join(alts) + ")"
+        return "".join(lit) + tail
+
+    return build(trie)
+
+
+_I18N_CHECK_S = 2.0       # 사전 파일이 바뀌었는지 이 간격으로만 봅니다 (JSON 문자열마다 stat 하지 않게)
+
+
 def _i18n():
+    now = time.monotonic()
+    if _I18N["rx"] is not None and now - _I18N.get("checked", 0.0) < _I18N_CHECK_S:
+        return _I18N
+    _I18N["checked"] = now
     try:
         m = I18N_FILE.stat().st_mtime
     except OSError:
         return None
     if _I18N["mtime"] != m:            # 사전을 고치면 재시작 없이 반영
         d = load_json(I18N_FILE, {})
-        keys = sorted((k for k in d if k and d[k] is not None), key=len, reverse=True)
-        _I18N.update(mtime=m, map=d, rx=re.compile("|".join(map(re.escape, keys))) if keys else None)
+        keys = [k for k in d if k and d[k] is not None]
+        _I18N.update(mtime=m, map=d, rx=re.compile(_trie_pattern(keys)) if keys else None)
+        _to_en_cached.cache_clear()
     return _I18N
 
 
@@ -378,6 +415,17 @@ def to_en(text):
     t = _i18n()
     if not t or t["rx"] is None:
         return text
+    if len(text) <= 200_000:
+        return _to_en_cached(text)          # 같은 화면·같은 문구는 다시 번역하지 않습니다 (사전이 바뀌면 비움)
+    return _to_en(text, t)
+
+
+@functools.lru_cache(maxsize=4096)
+def _to_en_cached(text):
+    return _to_en(text, _I18N)
+
+
+def _to_en(text, t):
 
     def rep(mt):
         k, v = mt.group(0), t["map"][mt.group(0)]
@@ -460,7 +508,9 @@ async def i18n_middleware(request: Request, call_next):
         return resp                    # 영상·MJPEG·tar 다운로드 등은 그대로 흘림
     body = b"".join([chunk async for chunk in resp.body_iterator])
     text = body.decode("utf-8", "replace")
-    out = (to_en_json(text) if ct.startswith("application/json") else to_en_html(text)).encode("utf-8")
+    conv = to_en_json if ct.startswith("application/json") else to_en_html
+    # 큰 화면은 스레드에서 — 번역하는 동안 이벤트 루프(제어 탭 E-STOP·카메라 스트림)가 멈추지 않게
+    out = (conv(text) if len(text) < 4096 else await asyncio.to_thread(conv, text)).encode("utf-8")
     headers = {k: v for k, v in resp.headers.items() if k.lower() != "content-length"}
     return Response(out, status_code=resp.status_code, headers=headers)
 
@@ -881,13 +931,15 @@ def human_bytes(n):
     return f"{v:.1f} GB"
 
 
-def list_datasets():
+def list_datasets(sizes=False):
+    """sizes=True 일 때만 폴더 크기·파일 수를 셉니다 (데이터셋 목록 화면만 씀) — 다른 화면은 이름·에피소드 수면 되는데
+    PNG 프레임이 남은 데이터셋은 파일이 수만 개라 셀 때마다 오래 걸립니다."""
     out = []
     if DATA_ROOT.exists():
         for d in sorted(DATA_ROOT.iterdir()):
             if (d / "meta/info.json").exists():
                 info = load_json(d / "meta/info.json", {})
-                nbytes, nfiles = dir_size(d)
+                nbytes, nfiles = dir_size(d) if sizes else (0, 0)
                 out.append({"name": d.name,
                             "episodes": info.get("total_episodes", "?"),
                             "frames": info.get("total_frames", "?"),
@@ -1275,10 +1327,29 @@ def job_alive(j):
     return st is None or _proc_start(pid) == st
 
 
+_JOB_CACHE = {}       # 작업 파일 경로 -> (mtime_ns, 내용) — 화면마다(데이터셋·모델 줄마다) 다시 읽지 않게
+
+
+def _load_job(jf):
+    try:
+        m = jf.stat().st_mtime_ns
+    except OSError:
+        return {}
+    hit = _JOB_CACHE.get(jf)
+    if hit and hit[0] == m:
+        return dict(hit[1])
+    j = load_json(jf, {})
+    _JOB_CACHE[jf] = (m, j)
+    return dict(j)
+
+
 def jobs_index():
     idx = []
-    for jf in sorted(JOB_DIR.glob("*.json"), reverse=True):
-        j = load_json(jf, {})
+    files = sorted(JOB_DIR.glob("*.json"), reverse=True)
+    if len(_JOB_CACHE) > 2 * len(files) + 50:
+        _JOB_CACHE.clear()
+    for jf in files:
+        j = _load_job(jf)
         if j:
             j["alive"] = job_alive(j)
             idx.append(j)
@@ -3140,6 +3211,8 @@ def index(request: Request, all: int = 0):
     dsets = list_datasets()
     show_all = bool(all) or not pname
     view = dsets if show_all else [d for d in dsets if owner.get(d["name"]) == pname]
+    for d in view:                         # 크기는 보이는 줄만 셉니다
+        d["bytes"], d["files"] = dir_size(DATA_ROOT / d["name"])
     cur_env = env_name()
 
     def _row(d):
@@ -4482,35 +4555,59 @@ def _parse_step(tok):
         return None
 
 
+_TRAINLOG = {}      # 로그 경로 -> {"off", "rest", "pts", "extra", "sps"} — 5초마다 수 MB 로그를 처음부터 다시 읽지 않게
+
+
+def _trainlog_points(path):
+    """학습 로그에서 step·loss·grad norm·lr·처리 속도를 뽑습니다. 지난번 읽은 곳 뒤만 새로 읽습니다."""
+    c = _TRAINLOG.get(path)
+    size = os.path.getsize(path)
+    if c is None or size < c["off"]:                     # 처음이거나 로그가 새로 써졌으면 처음부터
+        c = {"off": 0, "rest": "", "pts": [], "extra": [], "sps": None}
+        if len(_TRAINLOG) > 16:
+            _TRAINLOG.clear()
+        _TRAINLOG[path] = c
+    if size > c["off"]:
+        with open(path, "rb") as f:
+            f.seek(c["off"])
+            data = f.read()
+        c["off"] += len(data)
+        lines = re.split(r"\r\n|\r|\n", c["rest"] + data.decode("utf-8", errors="ignore"))
+        c["rest"] = lines.pop()                            # 끝나지 않은 마지막 줄은 다음에
+        for line in lines:
+            if "loss:" not in line:
+                continue
+            m = re.search(r"step:(\S+)\s.*?loss:([\d.]+)", line)
+            if not m:
+                continue
+            step = _parse_step(m.group(1))
+            if step is None:
+                continue
+            try:
+                c["pts"].append([step, float(m.group(2))])
+            except ValueError:
+                continue
+            g = re.search(r"grdn:([\d.eE+-]+)", line)
+            lr = re.search(r"\blr:([\d.eE+-]+)", line)
+            sp = re.search(r"smp/s:([\d.]+)", line)
+            try:
+                c["extra"].append([step, float(g.group(1)) if g else None, float(lr.group(1)) if lr else None])
+                c["sps"] = float(sp.group(1)) if sp else c["sps"]
+            except ValueError:
+                pass
+    return list(c["pts"]), list(c["extra"]), c["sps"]
+
+
 @app.get("/api/trainlog")
 def api_trainlog():
     trains = [j for j in jobs_index() if j["kind"] in ("train", "cloudtrain")]
     if not trains:
         return JSONResponse({"points": [], "tail": "", "current": None})
     j = next((t for t in trains if t["alive"]), trains[0])
-    pts, extra, sps = [], [], None
     try:
-        with open(j["log"], errors="ignore") as f:
-            for line in f:
-                m = re.search(r"step:(\S+)\s.*?loss:([\d.]+)", line)
-                if m:
-                    step = _parse_step(m.group(1))
-                    if step is None:
-                        continue
-                    try:
-                        pts.append([step, float(m.group(2))])
-                    except ValueError:
-                        continue
-                    g = re.search(r"grdn:([\d.eE+-]+)", line)
-                    lr = re.search(r"\blr:([\d.eE+-]+)", line)
-                    sp = re.search(r"smp/s:([\d.]+)", line)
-                    try:
-                        extra.append([step, float(g.group(1)) if g else None, float(lr.group(1)) if lr else None])
-                        sps = float(sp.group(1)) if sp else sps
-                    except ValueError:
-                        pass
+        pts, extra, sps = _trainlog_points(j["log"])
     except Exception:
-        pass
+        pts, extra, sps = [], [], None
     status = "running" if job_alive(j) else "finished"
     # 진행률·남은 시간: --steps 목표와 마지막 처리 속도(samples/s ÷ batch)
     args = dict(a.split("=", 1) for a in (j.get("argv") or []) if a.startswith("--") and "=" in a)
@@ -9835,12 +9932,20 @@ class _Preview:
             import cv2
         except ImportError:
             cv2 = None
+        sent = {}
         while self.on:
             t0 = time.monotonic()
             try:
                 self.write_status()
                 if cv2 is not None:
                     for k, frame in list(self.latest.items()):
+                        if sent.get(k) is frame:        # 새 프레임이 없으면(저장 중 등) 다시 인코딩하지 않습니다
+                            continue
+                        sent[k] = frame
+                        h, w = frame.shape[:2]
+                        if w > PREVIEW_W:               # 미리보기는 작게 — 인코딩·디스크 쓰기 부담을 줄입니다
+                            frame = cv2.resize(frame, (PREVIEW_W, max(1, h * PREVIEW_W // w)),
+                                               interpolation=cv2.INTER_AREA)
                         ok, buf = cv2.imencode(".jpg", cv2.cvtColor(frame, cv2.COLOR_RGB2BGR),
                                                [cv2.IMWRITE_JPEG_QUALITY, 60])
                         if ok:
@@ -10400,14 +10505,17 @@ def job_log(jid: str):
     j = load_json(JOB_DIR / f"{jid}.json", {})
     txt = ""
     try:
-        txt = Path(j["log"]).read_text(errors="ignore")[-8000:]
+        with open(j["log"], "rb") as f:             # 끝부분만 읽습니다 — 학습 로그는 수 MB
+            f.seek(max(-65536, -os.path.getsize(j["log"])), 2)
+            txt = collapse_cr(f.read().decode(errors="ignore"))[-8000:]
     except Exception:
         pass
+    alive = job_alive(j) if j else False
     return f"""{CSS}{nav_html('jb')}<div class=wrap>
     <p class=eyebrow>작업 로그</p><h2 class=mono style="font-size:17px">{esc(jid)}</h2>
     <pre style="max-height:none">{esc(txt) or '(로그 없음)'}</pre>
     <p class="muted mono">cmd: {esc(j.get('cmd', ''))}</p>
-    <script>setTimeout(()=>location.reload(),5000)</script></div>"""
+    {'<script>setTimeout(()=>location.reload(),5000)</script>' if alive else ''}</div>"""
 
 
 @app.post("/api/kill/{jid}")
@@ -10450,4 +10558,4 @@ if __name__ == "__main__":
         # uvicorn 은 WebSocket 라이브러리가 없으면 경고만 하고 /ws/* 를 404 로 거부합니다 → 제어 탭이 연결되지 않음
         print("!! WebSocket 라이브러리가 없습니다 — 제어 탭이 동작하지 않습니다. "
               "openmimic 환경에서: pip install \"websockets>=12\" 후 다시 실행하세요")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(app, host="0.0.0.0", port=PORT, access_log=False)   # 폴링 요청마다 콘솔 줄이 쌓이지 않게
