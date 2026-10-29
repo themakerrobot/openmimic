@@ -1592,5 +1592,7 @@
 "버림 — 영상 압축이 못 따라가 프레임이 빠짐 (카메라 해상도를 낮추거나 '바로 압축' 을 끄세요)": "Discarded — video compression could not keep up and frames were dropped (lower the camera resolution or turn off compress while recording)",
 "제어 탭을 닫거나 다른 탭으로 옮기면 토크를 끄고 연결을 풉니다 (팔이 떨어지지 않게 받쳐 두세요).": "Closing the Control tab or moving to another tab turns torque off and disconnects the arms (support the arms so they do not drop).",
 "다른 기기·브라우저에 제어 탭이 열려 있으면 거기서 닫으세요.": "If the Control tab is open on another device or browser, close it there.",
-"탭에서 중지할 수 있습니다.": "tab can stop it."
+"탭에서 중지할 수 있습니다.": "tab can stop it.",
+"로 학습합니다 — 내장 GPU 라 느립니다": " will be used for training — an integrated GPU is slow",
+"(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초). 긴 학습은 실행 위치를 HF 작업으로 고르세요": "(about 2.3 s per step on an Arc 140V · ACT · 3 cameras · batch 8). For long training choose HF Jobs as the run location"
 }

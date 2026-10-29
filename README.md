@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>로봇팔 셋업 · 데이터 수집 · 학습 · 실행을 웹 화면 하나로</b><br>
-  SO-ARM101 · ROBOTIS OMX · 한팔 / 양팔 · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU
+  SO-ARM101 · ROBOTIS OMX · 한팔 / 양팔 · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU<br>
+  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11
 </p>
 
 <p align="center">
@@ -39,12 +40,27 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 으로 로봇팔�
 | **SO-ARM101** (SO-101) | Feetech STS3215 | ✅ | ✅ | 관절을 손으로 끝까지 움직여 기록 |
 | **OMX** (ROBOTIS OMX-F / OMX-L) | Dynamixel XL430 / XL330 | ✅ | ✅ | 공장값 쓰기 (버튼 하나) |
 
-| 기기 | 학습 | 실행(추론) |
-|---|---|---|
-| Intel Core Ultra PC | HF Jobs 클라우드 또는 내장 GPU(실험적) | ✅ **NPU** / GPU / CPU (OpenVINO, ACT · ACT2) |
-| Jetson Thor · NVIDIA GPU PC | ✅ GPU | ✅ GPU |
+| 기기 | OS | 학습 | 실행(추론) |
+|---|---|---|---|
+| Intel Core Ultra PC | Ubuntu · Windows | 내장 GPU(XPU — 느림) 또는 HF Jobs 클라우드 | ✅ **NPU** / GPU / CPU (OpenVINO, ACT · ACT2) |
+| NVIDIA GPU PC | Ubuntu · Windows | ✅ GPU | ✅ GPU |
+| Jetson Thor | Ubuntu (JetPack) | ✅ GPU | ✅ GPU |
+
+같은 코드가 두 OS 에서 돌고 데이터셋·캘리브레이션·모델 파일 형식도 같아, Ubuntu 와 Windows 사이에 그대로 옮겨 씁니다.
+설치 스크립트가 기기 종류(Intel / Thor / NVIDIA)를 자동으로 고릅니다.
 
 ## 빠른 시작
+
+| OS | 설치 | 켜기 |
+|---|---|---|
+| Ubuntu 22.04 · 24.04 · 26.04 | `lerobot_conda.sh` | `./openmimic.sh start` |
+| Windows 10 · 11 (64비트) | `install.ps1` | 레포 폴더의 **`OpenMimic.bat`** 더블클릭 |
+
+켜면 접속 주소가 나옵니다. 브라우저에서 **`http://<PC IP>:8080`** 으로 들어가면 처음엔 **셋업 마법사**가 바로 뜨고,
+그다음부터는 데이터셋 화면 위의 **시작하기** 안내(셋업 → 캘리브레이션 → 수집 → 학습 → 실행)를 따라가면 됩니다.
+같은 네트워크의 노트북·태블릿에서 접속해도 됩니다.
+
+### Ubuntu
 
 ```bash
 mkdir -p ~/project && cd ~/project
@@ -62,34 +78,44 @@ sleep 3; tail -f lerobot_conda.log        # "=== 완료 ===" 가 나오면 Ctrl+
 
 | 명령 | 하는 일 |
 |---|---|
-| `./openmimic.sh start` · `stop` · `restart` | 켜기 · 끄기 · 다시 켜기 |
+| `./openmimic.sh start` · `stop` · `restart` | 켜기 · 끄기 · 다시 켜기 (백그라운드) |
 | `./openmimic.sh status` | 켜져 있는지와 접속 주소 |
 | `./openmimic.sh log` | 로그 보기 (Ctrl+C 로 나가도 OpenMimic 은 계속 돎) |
 | `./openmimic.sh update` | 최신 버전 받고 다시 켜기 |
 | `./openmimic.sh autostart on` | 로그인(부팅) 때 자동으로 켜기 — 이 계정만, `off` 로 끔 |
 
-브라우저에서 `start` 가 알려 준 주소(**`http://<PC IP>:8080`**)로 들어갑니다. 처음 열면 **셋업 마법사**가 바로 뜨고,
-그다음부터는 데이터셋 화면 위의 **시작하기** 안내(셋업 → 캘리브레이션 → 수집 → 학습 → 실행)를 따라가면 됩니다.
+### Windows 10 / 11
 
-### Windows 10 / 11 (시험 단계 — 실기 검증 전)
-
-PowerShell 에서 (git 이 없으면 먼저 `winget install --id Git.Git -e`):
+PowerShell 에서 (git 이 없으면 먼저 `winget install --id Git.Git -e`). 관리자 권한은 필요 없습니다.
 
 ```powershell
 git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic; cd $HOME\project\openmimic
-powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" 가 나올 때까지
-powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" 가 나올 때까지 (로그: lerobot_conda.log)
 ```
 
-`openmimic.ps1 start` 는 **그 창에서** 켭니다 — 로그가 창에 보이고 Ctrl+C 로 끕니다 (수집·학습 같은 작업은 계속 돎, 창을 닫으면 작업도 꺼짐).
-창 없이 켜려면 `background`. 그 밖의 명령은 `openmimic.sh` 와 같습니다 (`stop · restart · status · log · update · autostart on|off`).
-탐색기에서 **`OpenMimic.bat` 을 더블클릭**해도 켜집니다 (cmd 에서는 `OpenMimic.bat update` 처럼 명령을 붙여 씀).
-cmd 창에서는 `pwsh` 가 없을 수 있으니 위처럼 `powershell` 로 실행하세요.
-처음 켤 때 Windows 방화벽 창이 뜨면 **허용**해야 다른 PC·태블릿에서 접속됩니다.
+설치가 끝나면 탐색기에서 레포 폴더(`%USERPROFILE%\project\openmimic`)의 **`OpenMimic.bat` 을 더블클릭**합니다.
+바탕화면에 두려면 파일을 옮기지 말고 **바로 가기**를 만드세요. 처음 켤 때 Windows 방화벽 창이 뜨면 **허용**해야 다른 PC·태블릿에서 접속됩니다.
 
-- 기기 종류(Intel / Thor / NVIDIA)는 자동으로 고릅니다. Ubuntu 22.04 · 24.04 · 26.04, Windows 10 · 11
-- **다른 사람 환경을 바꾸지 않습니다** — conda 는 설치만 하고 `~/.bashrc` 를 건드리지 않으며, 패키지는 전부 `openmimic` 가상환경 안에 들어갑니다
-- 업데이트·플랫폼 등 자세한 내용은 **[docs/INSTALL.md](docs/INSTALL.md)**
+| 명령 (cmd 에서 레포 폴더로 이동해서 · PowerShell 은 `.\OpenMimic.bat …`) | 하는 일 |
+|---|---|
+| `OpenMimic.bat` (더블클릭) | **그 창에서** 켜기 — 로그가 창에 보이고 **Ctrl+C** 로 끔 |
+| `OpenMimic.bat update` | 최신 버전 받고 그 창에서 다시 켜기 |
+| `OpenMimic.bat stop` · `restart` · `status` | 끄기 · 다시 켜기 · 켜져 있는지와 접속 주소 |
+| `OpenMimic.bat background` · `log` | 창 없이 켜기 · 그 로그 보기 |
+| `OpenMimic.bat autostart on` | 로그인 때 최소화된 창으로 켜기 — 이 계정만, `off` 로 끔 |
+
+- 끌 때는 **Ctrl+C** — 수집·학습 같은 작업은 따로 돌아 계속 진행되고, 다시 켜면 작업 탭에 그대로 보입니다.
+  창을 **X 로 닫으면** 진행 중인 작업도 같이 꺼집니다.
+- `OpenMimic.bat` 은 `openmimic.ps1` 을 부릅니다 — `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start` 와 같습니다.
+- Intel 내장 GPU(XPU)로 학습하려면 설치할 때 PyTorch XPU 판을 고릅니다 — [docs/INTEL.md](docs/INTEL.md).
+  내장 GPU 는 느리므로(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초) 긴 학습은 **HF Jobs** 를 권합니다.
+- Windows 실기 확인 범위와 남은 확인 항목은 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) 에 있습니다.
+
+### 공통
+
+- **다른 사람 환경을 바꾸지 않습니다** — conda 는 설치만 하고(`conda init` 안 함) 셸 설정·PATH 를 건드리지 않으며, 패키지는 전부 `openmimic` 가상환경 안에 들어갑니다
+- 데이터·HF 캐시·캘리브레이션은 레포 폴더 `data/` 아래에 둡니다
+- 업데이트·파일 위치·플랫폼 등 자세한 내용은 **[docs/INSTALL.md](docs/INSTALL.md)**
 
 ## 처음 셋업 — 셋업 마법사
 
@@ -149,7 +175,8 @@ cmd 창에서는 `pwsh` 가 없을 수 있으니 위처럼 `powershell` 로 실�
 팔로워 수동 제어. 탭에 들어오면 자동으로 연결되고, 떠나면 토크를 끄고 연결을 끊습니다.
 
 - **토크 ON** 후 슬라이더로 이동, **리더 팔로우** 로 리더를 따라가게, **E-STOP** 으로 즉시 토크 해제
-- 명령을 못 따라가는 관절(막힘·보호)과 과열은 빨갛게 표시됩니다
+- 1초 넘게 명령을 못 따라가는 관절(막힘·보호)과 과열은 빨갛게 표시됩니다. 양팔에서 한 팔만 토크가 안 켜지면 그 팔에 따로 경고가 뜹니다
+- 다른 탭으로 옮기거나 탭을 닫으면 토크를 끄고 연결을 풉니다 — 그래야 수집·실행을 시작할 수 있습니다
 
 ![제어](docs/img/control.png)
 
@@ -165,6 +192,8 @@ cmd 창에서는 `pwsh` 가 없을 수 있으니 위처럼 `powershell` 로 실�
 
 - **신호음**으로 시작·저장·마지막 3초를 알려 줘 화면을 안 봐도 됩니다
 - 기존 데이터셋에 **이어서 수집**도 됩니다
+- **녹화하면서 바로 영상 압축**(Windows 기본 켜짐)을 켜면 에피소드 저장이 거의 바로 끝납니다. CPU 가 못 따라가 프레임이 빠진 에피소드는 버립니다
+- 진행 화면에 실제 **수집 주기**(예: `29.8 / 30 Hz`)가 보이고, 목표보다 낮으면 경고합니다 — 낮으면 데이터의 시간이 실제보다 빨라집니다
 
 | 수집 설정 | 수집 진행 |
 |---|---|
@@ -245,7 +274,7 @@ cmd 창에서는 `pwsh` 가 없을 수 있으니 위처럼 `powershell` 로 실�
 
 Intel Core Ultra PC 에서도 셋업·수집·리뷰는 똑같고, **ACT · ACT2** 모델을 OpenVINO 로 바꿔 **NPU** 에서 실행합니다.
 
-1. 학습 — 이 PC 의 내장 GPU 로 학습(실험적)하거나, HF Jobs(클라우드)·NVIDIA 기기에서 학습한 모델을 **모델 → 가져오기**
+1. 학습 — 이 PC 의 내장 GPU(XPU, 느림)로 학습하거나, HF Jobs(클라우드)·NVIDIA 기기에서 학습한 모델을 **모델 → 가져오기**
 2. **모델 → OpenVINO 변환** — NPU · GPU · CPU 마다 오차와 추론 시간을 표로 보여 줍니다
 3. **실행 → 추론 엔진: OpenVINO · NPU**
 
@@ -275,16 +304,21 @@ Intel Core Ultra PC 에서도 셋업·수집·리뷰는 똑같고, **ACT · ACT2
 | 증상 | 확인 |
 |---|---|
 | 포트가 안 보임 | USB 다시 꽂기, 설치 후 재로그인 했는지 (`groups` 에 `dialout`). Windows 는 장치 관리자의 **포트(COM & LPT)** 에 보이는지, 드라이버(CH340/CH343 · CP210x) |
+| Windows: `'pwsh' is not recognized` | PowerShell 7 이 없는 것입니다 — `powershell` 로 실행하거나 `OpenMimic.bat` 을 쓰세요 |
+| Windows: 스크립트 실행이 막힘 (실행 정책) | `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start` 처럼 앞에 붙이거나 `OpenMimic.bat` 을 쓰세요 |
+| Windows: 다른 PC·태블릿에서 접속이 안 됨 | 처음 켤 때 뜬 방화벽 창에서 허용했는지 — 설정 → 개인 정보 및 보안 → Windows 보안 → 방화벽에서 Python 허용 |
+| Windows: 카메라가 안 열림 | 설정 → 개인 정보 → **카메라** 에서 데스크톱 앱 접근 허용, 다른 프로그램(화상회의 등)이 카메라를 쓰는지 |
+| Windows: 수집 주기 경고 | 카메라 형식 MJPG, 카메라를 다른 USB 포트로 나눠 꽂기. 그래도 낮으면 [INSTALL.md](docs/INSTALL.md#windows-에서-포트카메라) 의 실시간 검사 예외 |
 | 재부팅 뒤 팔·카메라가 바뀜 (Windows) | 시리얼 번호 없는 보드·카메라는 **꽂은 USB 구멍**을 따라갑니다 — 항상 같은 구멍에. 카메라가 번호로만 잡히면 `pip install pygrabber` |
 | "캘리브레이션 파일이 없습니다" | 셋업 마법사 ③ 또는 캘리브레이션 탭. 다른 PC 의 파일이면 캘리브레이션 → 가져오기 |
 | 3D 가 안 나옴 | 3D 는 인터넷(CDN)에서 받습니다. 인터넷이 없으면 3D 칸만 빠지고 나머지는 동작 |
 | 카메라 여러 대가 끊김 | 셋업 → 카메라 **형식** 을 MJPG 로, 카메라는 PC 본체 포트에 |
-| "다른 작업 실행 중" | 제어 탭이 열려 있거나 수집·감시·캘리브레이션이 도는 중 — 더보기 → 작업에서 끝내기 |
+| "다른 작업 실행 중" / "실행 중: manual-control" | 제어 탭이 열려 있거나(다른 기기·브라우저 포함 — 닫으면 풀림) 수집·감시·캘리브레이션이 도는 중 — 더보기 → 작업에서 끝내기 |
 | 데이터셋에 "마무리 안 됨" | 데이터셋 목록의 **복구** |
 | 실행이 바로 끝남 | 실행 화면의 **원인 추정** 과 로그 |
 | "정책이 카메라 … 를 씁니다" / "관절 수 …" | 학습 때와 카메라 이름·한팔/양팔이 다름 — 셋업을 학습 때와 같게 |
-| 업데이트 후 화면이 이상함 | `./openmimic.sh restart` + 브라우저 강력 새로고침 (Ctrl+Shift+R) |
-| 화면 위에 "캘리브레이션 폴더가 설치 폴더가 아니라 …" | `activate.sh` 없이 켠 경우입니다. 끄고 `./openmimic.sh start` 로 다시 켜세요 (Windows 는 `openmimic.ps1 start`) |
+| 업데이트 후 화면이 이상함 | `./openmimic.sh restart` (Windows 는 `OpenMimic.bat restart`) + 브라우저 강력 새로고침 (Ctrl+Shift+R) |
+| 화면 위에 "캘리브레이션 폴더가 설치 폴더가 아니라 …" | `activate.sh` 없이 켠 경우입니다. 끄고 `./openmimic.sh start` 로 다시 켜세요 (Windows 는 `OpenMimic.bat`) |
 | "전원 점검 실패 — 시작하지 않았습니다" | 리더·팔로워 어댑터가 바뀌었거나 전압이 서보 한계 밖입니다. **전원부터 분리**하고 어댑터 라벨을 확인하세요 |
 | "서보 상태 이상으로 자동 정지" | 과열이면 식힌 뒤 막힘·과부하 원인을, 전압 강하면 어댑터 전류 용량·커넥터를 확인하세요 |
 
@@ -292,11 +326,11 @@ Intel Core Ultra PC 에서도 셋업·수집·리뷰는 똑같고, **ACT · ACT2
 
 | 문서 | 내용 |
 |---|---|
-| [docs/INSTALL.md](docs/INSTALL.md) | 설치 스크립트가 하는 일, 업데이트, 파일 위치, 보안, 터미널 도구 |
+| [docs/INSTALL.md](docs/INSTALL.md) | 설치 스크립트가 하는 일(Ubuntu · Windows), 업데이트, 파일 위치, 보안, 터미널 도구 |
 | [docs/POLICIES.md](docs/POLICIES.md) | 학습 정책 비교, 양팔 지원, 넣지 않은 정책 |
 | [docs/INTEL.md](docs/INTEL.md) | Intel Core Ultra — OpenVINO 변환·NPU 추론, XPU 학습, 실측값 |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | 구조·설계 이유·설정 파일 형식·판정 근거 (개발자용) |
-| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows 지원 — 바뀐 점, 확인한 것과 아직 확인 못 한 것 |
+| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows 지원 — OS 차이를 메운 방법, 실기에서 확인한 것과 남은 확인 항목 |
 
 ## License
 

@@ -115,7 +115,7 @@ switch ($Platform) {
     'win-intel' {
         switch ($TorchFlavor) {
             'cpu' { $TorchIndexes = @('https://download.pytorch.org/whl/cpu', 'https://pypi.org/simple') }
-            # TODO(win-verify): Windows XPU 휠로 Intel GPU 학습이 되는지 — 못 받으면 CPU 휠로 내려갑니다
+            # Windows XPU 휠로 Intel GPU 학습이 되는 것을 실기로 확인했습니다 (Arc 140V, ACT 5000 step). 못 받으면 CPU 휠로 내려갑니다
             'xpu' { $TorchIndexes = @('https://download.pytorch.org/whl/xpu', 'https://download.pytorch.org/whl/cpu', 'https://pypi.org/simple') }
             default { Die "OPENMIMIC_TORCH 는 cpu | xpu 중 하나: $TorchFlavor" }
         }
@@ -267,7 +267,7 @@ if ($Platform -eq 'win-intel') {
     Log "4-5. OpenVINO / NNCF (Intel NPU·GPU·CPU 추론)"
     if ((Pip @('install', 'openvino>=2025.4', 'nncf>=2.19')) -ne 0) { Die "openvino 설치 실패" }
 
-    # TODO(win-verify): Core Ultra Windows 에서 OpenVINO 가 NPU 를 잡고 openmimic_ov 변환·추론이 되는지
+    # Core Ultra Windows 에서 OpenVINO 가 NPU 를 잡고 openmimic_ov 변환이 되는 것은 실기로 확인 — TODO(win-verify): NPU 실행(롤아웃)
     Log "4-6. Intel NPU / GPU 점검 (드라이버는 설치하지 않습니다 — 안내만)"
     $cpu = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Name
     Write-Log "CPU : $cpu"

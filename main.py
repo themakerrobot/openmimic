@@ -4358,8 +4358,8 @@ def api_train_check(dataset: str = "", policy: str = "act", opts: str = "", targ
         if cu.get("ok"):
             warns.append(f"GPU: {cu.get('name')} · {cu.get('vram_gb')} GiB")
         elif cu.get("xpu"):
-            warns.append(f"Intel GPU(XPU) {cu.get('xpu_name')} 로 학습합니다 — 실험적 기능입니다 (실기 검증 전). "
-                         "느리거나 실패하면 실행 위치를 HF 작업으로 고르세요")
+            warns.append(f"Intel GPU(XPU) {cu.get('xpu_name')} 로 학습합니다 — 내장 GPU 라 느립니다 "
+                         "(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초). 긴 학습은 실행 위치를 HF 작업으로 고르세요")
         else:
             warns.append("이 기기에는 학습 가속 장치가 없어 CPU 로 학습합니다 — 매우 느립니다. 실행 위치를 HF 작업으로 고르세요")
     return {"error": err, "warnings": warns}

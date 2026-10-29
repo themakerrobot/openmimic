@@ -8,11 +8,10 @@
 **요약**
 
 - Ubuntu 는 가상 장치 전 구성 회귀 시험을 통과했습니다. 변경 전 코드로 같은 시험을 돌려 결과를 비교했습니다.
-- Windows 실기에서는 **설치까지만 확인**했습니다 (Core Ultra 200V · Arc 140V 기기, `win-intel`). 서버 실행·팔·카메라·가상 장치는 아직입니다.
-- Windows 쪽은 다음까지만 확인했습니다.
-  - 모의 장치로 논리 시험
-  - 출력 파싱 시험
-  - PowerShell 스크립트 정적 점검
+- Windows 는 **실기로 공식 지원**합니다. Core Ultra 200V(Arc 140V) 노트북 · `win-intel` + XPU · SO-ARM101 양팔 · USB 카메라 3대로
+  설치 → 실행(`OpenMimic.bat`) → 셋업 마법사(포트·진단·캘리브레이션·확인) → 제어 → 수집 → XPU 학습 → OpenVINO 변환까지 확인했습니다.
+  실기에서 나온 문제와 고친 방법은 3-1 절에 있습니다.
+- 아직 실기로 못 본 것: NPU 실행(롤아웃), Windows + NVIDIA(`win-cuda`), OMX, 재부팅 뒤 카메라·보드 식별 유지, 자동 시작, 작업 중지 신호 — 6절 표와 4절 목록.
 - 확신 없는 Windows 동작은 코드에 `TODO(win-verify)` 로 남겼습니다 (아래 목록).
 
 ## 1. 바뀐 파일과 이유
@@ -160,9 +159,8 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | `openmimic_platform.py` `_win_cameras` (폴백) | pygrabber·ffmpeg 가 둘 다 없으면 번호로만 지정 — 재부팅·재연결 때 순서가 바뀔 수 있음 |
 | `openmimic_platform.py` `stdin_line_ready` | Windows 콘솔에서 msvcrt 로 Enter 감지 (`tools_armcheck --sweep`) |
 | `openmimic_platform.py` `replace_file` · `read_text` | 2 초 다시 시도로 충분한지 (Defender 검사가 더 길면 저장 실패가 남음) |
-| `install.ps1` XPU | 휠 설치·장치 인식은 확인 (`2.11.0+xpu`, `xpu: True`, Arc 140V). **학습이 실제로 도는지**는 아직 |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
-| `install.ps1` OpenVINO | OpenVINO 가 `CPU GPU NPU` 를 잡는 것은 확인. `openmimic_ov` 변환·NPU 추론은 아직 |
+| `install.ps1` OpenVINO | `CPU GPU NPU` 인식과 `openmimic_ov` 변환은 실기 확인. **NPU 실행(롤아웃)** 은 아직 |
 | `openmimic.ps1` autostart | 시작프로그램 바로 가기로 로그인 때 켜지는지 |
 
 ## 5. 단계 5 — lerobot Windows 호환 확인 결과
@@ -216,12 +214,12 @@ lerobot `e40b58a`, torch 2.11, mujoco 3.17 을 썼고 MuJoCo 렌더는 OSMesa �
 
 | # | 항목 | 결과 |
 |---|---|---|
-| 1 | `install.ps1` → `openmimic.ps1 start` → 브라우저 | **`install.ps1` 통과** (Windows 실기, `win-intel`, 끝까지 `=== 완료 ===`; 같은 기기에서 `xpu` 로 다시 설치도 통과). `openmimic.ps1 start` 이후는 아직. 실기 설치 로그에서 고친 것: 다시 설치할 때 setuptools 를 최신으로 올려 lerobot·torch 요구 범위 충돌 오류가 찍히던 것(`setuptools<81` 로 고정 — Linux 판도 같이), conda 의 빈 표준오류 줄이 `System.Management.Automation.RemoteException` 으로 찍히던 것 |
-| 2 | 실기 SO-ARM101: 포트 찾기(COM + SN) · 진단 · 캘리브레이션 · 확인 · 제어 · 수집 3 | **못 함**. 포트 해석 논리(시리얼 번호 → COM, USB 위치 → COM, 대소문자 COM, 없는 포트 예외, 형식 검사)는 모의 `comports()` 로 시험해 통과 |
-| 3 | 카메라 2대 등록 → 재부팅 → 같은 장치 | **못 함**. ffmpeg `-list_devices` 옛·새 출력 형식 파싱과 장치 경로에서 시리얼 판별은 시험해 통과 |
+| 1 | `install.ps1` → `openmimic.ps1 start` → 브라우저 | **통과** (Windows 실기, `win-intel`, 끝까지 `=== 완료 ===`; 같은 기기에서 `xpu` 로 다시 설치도 통과. `OpenMimic.bat`·`openmimic.ps1 restart`·`update` 로 켜고 다른 기기 브라우저에서 접속). 실기 설치 로그에서 고친 것: 다시 설치할 때 setuptools 를 최신으로 올려 lerobot·torch 요구 범위 충돌 오류가 찍히던 것(`setuptools<81` 로 고정 — Linux 판도 같이), conda 의 빈 표준오류 줄이 `System.Management.Automation.RemoteException` 으로 찍히던 것 |
+| 2 | 실기 SO-ARM101: 포트 찾기(COM + SN) · 진단 · 캘리브레이션 · 확인 · 제어 · 수집 | **통과** (양팔). 실기에서 고친 것: 캘리브레이션 저장 중 EEPROM 쓰기 응답 하나가 늦으면 저장 전체가 멈추던 것(레지스터마다 다시 시도), 양팔에서 한 팔만 토크가 켜진 상태가 화면에 안 보이던 것, '못 따라가는 관절' 경고가 순간 오차로 계속 뜨던 것, 에피소드 저장이 1분 넘게 걸리던 것(3-1절) |
+| 3 | 카메라 등록 → 재부팅 → 같은 장치 | **등록·수집은 통과** (DirectShow 경로, 3대, MJPG). 재부팅 뒤 같은 장치로 잡히는지는 아직 |
 | 4 | 가상 장치 + MuJoCo(wgl) | **못 함**. 가상 시리얼(소켓)은 OS 기능을 쓰지 않아 Linux 와 같은 코드입니다. `wgl` 렌더는 미확인 |
 | 5 | Ubuntu 데이터셋·캘리브레이션 zip·모델을 Windows 로 가져와 학습·실행 | **못 함**. 포맷은 바꾸지 않았습니다 |
-| 6 | Core Ultra: OpenVINO 변환 → NPU 실행 | **장치 인식만 확인** (`CPU GPU NPU`). 변환·실행은 아직 |
+| 6 | Core Ultra: XPU 학습 → OpenVINO 변환 → NPU 실행 | **XPU 학습·변환 통과** (ACT 5000 step, 스텝당 약 2.3초; 학습 끝의 `checkpoints/last` 링크 권한 오류는 3-1절에서 고침). NPU 실행은 아직 |
 | 7 | 작업 중지·강제 중지 | **못 함**. 코드는 CTRL_BREAK(정상) / `taskkill /T /F`(강제), 처리기는 SIGINT·SIGTERM·SIGBREAK |
 
 Windows 실기 시험은 위 7개 항목과 4절 목록을 같이 확인하면 됩니다.

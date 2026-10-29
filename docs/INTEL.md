@@ -58,7 +58,7 @@ p95 가 프레임 예산(30 fps 면 33 ms) 안이고 오차가 작으면 **OK** 
 | 방법 | 어떻게 | 비고 |
 |---|---|---|
 | **HF Jobs (권장)** | 학습 탭 **실행 위치** 에서 HF Jobs GPU 선택 | 기기와 무관. 유료(시간당), Hub 로그인 필요. 끝나면 허브 탭에서 모델 받기 → 변환 |
-| **이 기기 Intel GPU (실험적)** | PyTorch XPU 휠 → 실행 위치 '이 기기' | lerobot 이 XPU 를 자동으로 고릅니다 |
+| **이 기기 Intel GPU (XPU)** | PyTorch XPU 휠 → 실행 위치 '이 기기' | lerobot 이 XPU 를 자동으로 고릅니다. Ubuntu · Windows 실기 확인, 느림(아래 실측) |
 | **NVIDIA 기기** | Thor 등에서 학습 → 모델 탭 내보내기 → 이 기기에서 가져오기 | 위 2단계 |
 | 이 기기 CPU | 기본 설치 그대로 '이 기기' | 매우 느림. 동작 확인용 |
 
@@ -73,6 +73,17 @@ python -c "import torch; print(torch.__version__, torch.xpu.is_available())"    
 
 되돌리기: 같은 명령에서 `whl/xpu` 대신 `whl/cpu`. 새로 설치할 때부터 쓰려면 `OPENMIMIC_PLATFORM=intel OPENMIMIC_TORCH=xpu ./lerobot_conda.sh`.
 
+Windows (PowerShell, OpenMimic 을 끄고 레포 폴더에서):
+
+```powershell
+. .\activate.ps1
+pip uninstall -y torch torchvision
+pip install "torch<2.12" "torchvision<0.27" --index-url https://download.pytorch.org/whl/xpu
+python -c "import torch; print(torch.__version__, torch.xpu.is_available())"
+```
+
+새로 설치할 때부터 쓰려면 `$env:OPENMIMIC_TORCH='xpu'; powershell -ExecutionPolicy Bypass -File .\install.ps1`.
+
 ### 실측
 
 | 조건 | 결과 |
@@ -80,6 +91,7 @@ python -c "import torch; print(torch.__version__, torch.xpu.is_available())"    
 | Ubuntu 26.04 + Core Ultra 내장 GPU `Intel(R) Graphics`, torch 2.11.0+xpu | `torch.xpu.is_available()` True, OpenVINO `CPU·GPU·NPU` 그대로 |
 | ACT 52M · batch 8 · XPU | **약 1.17 s/step** (`updt_s 1.166`, `data_s 0.009` — GPU 계산이 병목) |
 | 환산 | 2000 step 약 39분 · 80000 step 약 26시간 |
+| Windows 11 + Core Ultra 200V `Arc 140V`, torch 2.11.0+xpu · ACT · 카메라 3대(640×480) · batch 8 | **약 2.28 s/step** (`updt_s 2.28`, `data_s 0.024`) — 5000 step 3시간 15분, 80000 step 약 50시간 |
 
 동작 확인·짧은 학습은 이 기기로, 본 학습(수만 step)은 HF Jobs 나 NVIDIA 기기를 권합니다.
 

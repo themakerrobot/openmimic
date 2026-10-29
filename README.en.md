@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>Robot arm setup · data collection · training · rollout in one web screen</b><br>
-  SO-ARM101 · ROBOTIS OMX · single / bimanual · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU
+  SO-ARM101 · ROBOTIS OMX · single / bimanual · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU<br>
+  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11
 </p>
 
 <p align="center">
@@ -41,12 +42,27 @@ The screen switches between Korean and English with the **한/EN** button in the
 | **SO-ARM101** (SO-101) | Feetech STS3215 | ✅ | ✅ | Move each joint by hand to its limits |
 | **OMX** (ROBOTIS OMX-F / OMX-L) | Dynamixel XL430 / XL330 | ✅ | ✅ | Write factory values (one button) |
 
-| Device | Training | Rollout (inference) |
-|---|---|---|
-| Intel Core Ultra PC | HF Jobs cloud or integrated GPU (experimental) | ✅ **NPU** / GPU / CPU (OpenVINO, ACT · ACT2) |
-| Jetson Thor · NVIDIA GPU PC | ✅ GPU | ✅ GPU |
+| Device | OS | Training | Rollout (inference) |
+|---|---|---|---|
+| Intel Core Ultra PC | Ubuntu · Windows | Integrated GPU (XPU — slow) or HF Jobs cloud | ✅ **NPU** / GPU / CPU (OpenVINO, ACT · ACT2) |
+| NVIDIA GPU PC | Ubuntu · Windows | ✅ GPU | ✅ GPU |
+| Jetson Thor | Ubuntu (JetPack) | ✅ GPU | ✅ GPU |
+
+The same code runs on both operating systems and the dataset, calibration and model file formats are the same, so files move between Ubuntu and Windows as they are.
+The install script picks the device type (Intel / Thor / NVIDIA) automatically.
 
 ## Quick start
+
+| OS | Install | Start |
+|---|---|---|
+| Ubuntu 22.04 · 24.04 · 26.04 | `lerobot_conda.sh` | `./openmimic.sh start` |
+| Windows 10 · 11 (64-bit) | `install.ps1` | double-click **`OpenMimic.bat`** in the repo folder |
+
+When it starts it prints the address. Open **`http://<PC IP>:8080`** in a browser: the **setup wizard** opens the first time,
+and after that you follow the **Getting started** guide above the dataset list (Setup → Calibration → Collect → Training → Rollout).
+Laptops and tablets on the same network can connect too.
+
+### Ubuntu
 
 ```bash
 mkdir -p ~/project && cd ~/project
@@ -64,34 +80,44 @@ When the install finishes, **log out and log back in once** (serial and camera p
 
 | Command | What it does |
 |---|---|
-| `./openmimic.sh start` · `stop` · `restart` | Start · stop · restart |
+| `./openmimic.sh start` · `stop` · `restart` | Start · stop · restart (in the background) |
 | `./openmimic.sh status` | Whether it is running, and the address |
 | `./openmimic.sh log` | Show the log (Ctrl+C leaves; OpenMimic keeps running) |
 | `./openmimic.sh update` | Get the latest version and restart |
 | `./openmimic.sh autostart on` | Start automatically at login (boot) — this account only; `off` turns it off |
 
-Open the address printed by `start` (**`http://<PC IP>:8080`**) in a browser. The **setup wizard** opens the first time;
-after that, follow the **Getting started** guide above the dataset list (Setup → Calibration → Collect → Training → Rollout).
+### Windows 10 / 11
 
-### Windows 10 / 11 (preview — not yet verified on real hardware)
-
-In PowerShell (if git is missing, first `winget install --id Git.Git -e`):
+In PowerShell (if git is missing, first `winget install --id Git.Git -e`). No administrator rights are needed.
 
 ```powershell
 git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic; cd $HOME\project\openmimic
-powershell -ExecutionPolicy Bypass -File .\install.ps1      # until "=== 완료 ===" (done) appears
-powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # until "=== 완료 ===" (done) appears (log: lerobot_conda.log)
 ```
 
-`openmimic.ps1 start` runs OpenMimic **in that window** — the log shows there and Ctrl+C stops it (jobs such as collection and training keep running; closing the window stops them too).
-Use `background` to run without a window. Other commands are the same as `openmimic.sh` (`stop · restart · status · log · update · autostart on|off`).
-You can also **double-click `OpenMimic.bat`** in Explorer to start it (from cmd, add a command such as `OpenMimic.bat update`).
-In a cmd window `pwsh` may not exist; use `powershell` as above.
-If a Windows Firewall prompt appears the first time, choose **Allow** so other PCs and tablets can connect.
+When the install finishes, **double-click `OpenMimic.bat`** in the repo folder (`%USERPROFILE%\project\openmimic`) in Explorer.
+To keep it on the desktop, create a **shortcut** instead of moving the file. If a Windows Firewall prompt appears the first time, choose **Allow** so other PCs and tablets can connect.
 
-- The device type (Intel / Thor / NVIDIA) is detected automatically. Ubuntu 22.04 · 24.04 · 26.04, Windows 10 · 11
-- **Other users' environments are left alone** — conda is installed but `~/.bashrc` is not touched, and every package goes into the `openmimic` virtual environment
-- Updates, platforms and more: **[docs/INSTALL.md](docs/INSTALL.md)** (Korean)
+| Command (in cmd, from the repo folder · in PowerShell `.\OpenMimic.bat …`) | What it does |
+|---|---|
+| `OpenMimic.bat` (double-click) | Start **in that window** — the log shows there; **Ctrl+C** stops it |
+| `OpenMimic.bat update` | Get the latest version and restart in that window |
+| `OpenMimic.bat stop` · `restart` · `status` | Stop · restart · whether it is running, and the address |
+| `OpenMimic.bat background` · `log` | Start without a window · show its log |
+| `OpenMimic.bat autostart on` | Start in a minimized window at login — this account only; `off` turns it off |
+
+- Stop it with **Ctrl+C** — jobs such as collection and training run separately and keep going; they show up in the Jobs tab when you start it again.
+  Closing the window with **X** stops running jobs too.
+- `OpenMimic.bat` calls `openmimic.ps1` — the same as `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start`.
+- To train on the Intel integrated GPU (XPU), choose the PyTorch XPU build when installing — [docs/INTEL.md](docs/INTEL.md).
+  The integrated GPU is slow (about 2.3 s per step on an Arc 140V · ACT · 3 cameras · batch 8), so **HF Jobs** is recommended for long training.
+- What has been checked on real Windows hardware and what is still open: [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) (Korean).
+
+### Both
+
+- **Other users' environments are left alone** — conda is installed only (no `conda init`), shell settings and PATH are not touched, and every package goes into the `openmimic` virtual environment
+- Data, the HF cache and calibration files live under `data/` in the repo folder
+- Updates, file locations, platforms and more: **[docs/INSTALL.md](docs/INSTALL.md)** (Korean)
 
 ## First setup — setup wizard
 
@@ -151,7 +177,8 @@ Use it to calibrate on its own and to **manage calibration files**. ⚠️ Torqu
 Manual control of the follower. It connects when you open the tab and turns torque off and disconnects when you leave.
 
 - **Torque ON**, then move with the sliders; **Leader follow** makes it follow the leader; **E-STOP** releases torque immediately
-- Joints that cannot follow the command (blocked · protection) and overheating are shown in red
+- Joints that cannot follow the command for more than a second (blocked · protection) and overheating are shown in red. With two arms, an arm whose torque did not turn on gets its own warning
+- Moving to another tab or closing it turns torque off and disconnects — collection and rollout can only start after that
 
 ![Control](docs/img/control.png)
 
@@ -167,6 +194,8 @@ Enter the collection settings and start. **Recording does not start by itself** 
 
 - **Beeps** signal start, save and the last 3 seconds, so you do not need to watch the screen
 - You can also **continue recording** into an existing dataset
+- With **Compress video while recording** (on by default on Windows), saving an episode finishes almost immediately. Episodes with dropped frames (CPU could not keep up) are discarded
+- The screen shows the actual **collect rate** (e.g. `29.8 / 30 Hz`) and warns when it is below the target — then the recorded time runs faster than real time
 
 | Collect settings | Collecting |
 |---|---|
@@ -248,7 +277,7 @@ Calibration files are saved under the **calibration id**. Give each set a differ
 
 On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT · ACT2** models are converted to OpenVINO to run on the **NPU**.
 
-1. Training — train on this PC's integrated GPU (experimental), or **Models → Import** a model trained on HF Jobs (cloud) or an NVIDIA device
+1. Training — train on this PC's integrated GPU (XPU, slow), or **Models → Import** a model trained on HF Jobs (cloud) or an NVIDIA device
 2. **Models → OpenVINO convert** — shows error and inference time for each of NPU · GPU · CPU
 3. **Rollout → inference engine: OpenVINO · NPU**
 
@@ -278,16 +307,21 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | Symptom | Check |
 |---|---|
 | No port shown | Replug USB; did you log in again after installing (`dialout` in `groups`). On Windows, check that it appears under **Ports (COM & LPT)** in Device Manager and the driver (CH340/CH343 · CP210x) |
+| Windows: `'pwsh' is not recognized` | PowerShell 7 is not installed — use `powershell`, or `OpenMimic.bat` |
+| Windows: script blocked (execution policy) | Prefix it like `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start`, or use `OpenMimic.bat` |
+| Windows: other PCs or tablets cannot connect | Allow it in the firewall prompt shown at first start — or allow Python in Settings → Privacy & security → Windows Security → Firewall |
+| Windows: camera does not open | Settings → Privacy → **Camera**: allow desktop apps; check that no other program (video calls etc.) is using it |
+| Windows: collect rate warning | Camera format MJPG, spread cameras over different USB ports. If still low, the real-time scan exclusion in [INSTALL.md](docs/INSTALL.md) |
 | Arms or cameras swap after a reboot (Windows) | Boards and cameras without a serial number follow the **USB socket** they are plugged into — always use the same socket. If cameras only show up by number, `pip install pygrabber` |
 | "No calibration file" | Setup wizard step ③ or the Calibration tab. For a file from another PC, Calibration → Import |
 | No 3D view | 3D is loaded from the internet (CDN). Without internet only the 3D box is missing; the rest works |
 | Several cameras drop out | Setup → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
-| "Another job is running" | The Control tab is open, or collection · port watch · calibration is running — finish it in More → Jobs |
+| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs |
 | Dataset shows "not finalized" | **Repair** in the dataset list |
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |
 | "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make the setup match training |
-| Screen looks wrong after an update | `./openmimic.sh restart` + hard refresh in the browser (Ctrl+Shift+R) |
-| "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` (on Windows `openmimic.ps1 start`) |
+| Screen looks wrong after an update | `./openmimic.sh restart` (on Windows `OpenMimic.bat restart`) + hard refresh in the browser (Ctrl+Shift+R) |
+| "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` (on Windows `OpenMimic.bat`) |
 | "Power check failed — not started" | The leader and follower adapters are swapped or the voltage is outside the servo limit. **Disconnect power first** and check the adapter labels |
 | "Stopped automatically due to a servo fault" | For overheating, let it cool and look for jams or overload; for a voltage drop, check the adapter current rating and connectors |
 
@@ -297,11 +331,11 @@ The detailed documents are in Korean.
 
 | Document | Contents |
 |---|---|
-| [docs/INSTALL.md](docs/INSTALL.md) | What the install script does, updates, file locations, security, terminal tools |
+| [docs/INSTALL.md](docs/INSTALL.md) | What the install scripts do (Ubuntu · Windows), updates, file locations, security, terminal tools |
 | [docs/POLICIES.md](docs/POLICIES.md) | Training policy comparison, bimanual support, policies not included |
 | [docs/INTEL.md](docs/INTEL.md) | Intel Core Ultra — OpenVINO conversion · NPU inference, XPU training, measurements |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Structure · design reasons · config file format · decision criteria (for developers) |
-| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows support — what changed, what was verified and what is not yet verified (Korean) |
+| [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) | Windows support — how OS differences are handled, what was checked on real hardware and what is still open |
 
 ## License
 

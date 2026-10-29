@@ -44,10 +44,11 @@ Diffusion·SmolVLA 패키지까지 설치합니다. 기기 종류는 자동으�
 - NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다.
 - 지우기: `rm -rf ~/project/openmimic ~/miniforge3` (다른 conda 를 이미 쓰고 있었다면 `~/miniforge3` 가 이 스크립트가 만든 것인지 확인 후)
 
-## Windows 10 / 11 — `install.ps1` (시험 단계)
+## Windows 10 / 11 — `install.ps1`
 
-Linux 와 같은 코드가 Windows 에서도 돌도록 옮겼지만 **Windows 실기 검증은 아직입니다** — 확인 안 된 항목은
-[WINDOWS_PORT.md](WINDOWS_PORT.md) 에 모아 두었습니다.
+Linux 와 같은 코드가 Windows 에서 돕니다. Core Ultra 200V(Arc 140V) 노트북에서 SO-ARM101 양팔로 설치 → 셋업 마법사·캘리브레이션 → 제어 →
+카메라 3대 수집 → XPU 학습 → OpenVINO 변환까지 실기로 확인했습니다. 남은 확인 항목은 [WINDOWS_PORT.md](WINDOWS_PORT.md) 에 있습니다.
+설치가 끝나면 레포 폴더의 `OpenMimic.bat` 을 더블클릭해 켭니다.
 
 ```powershell
 git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic
