@@ -2,7 +2,7 @@
 
 <a href="GUIDE.md">한국어</a> · <b>English</b>
 
-For installation see [INSTALL.md](INSTALL.md) (Korean); for the overview see the [README](../README.en.md). This guide covers each screen and troubleshooting.
+For installation see [INSTALL.md](INSTALL.md) (Korean); for the overview see the [README](../README.en.md); for the Intel NPU see [INTEL.en.md](INTEL.en.md). This guide covers each screen and troubleshooting.
 The screen switches between Korean and English with the **한/EN** button in the top bar. The screenshots show the Korean screen.
 
 - [First setup — setup wizard](#first-setup--setup-wizard)
@@ -178,7 +178,7 @@ On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT
 2. **Models → OpenVINO convert** (FP16 · INT8) — shows error and inference time for each of NPU · GPU · CPU
 3. **Rollout → inference engine: OpenVINO · NPU**
 
-Details and measurements: **[INTEL.md](INTEL.md)** (Korean)
+Details and measurements: **[INTEL.en.md](INTEL.en.md)**
 
 ## Servo health monitoring · power check
 

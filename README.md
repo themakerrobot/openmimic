@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <img alt="Windows native" src="https://img.shields.io/badge/Windows-native-0078D6">
+  <img alt="Single and bimanual" src="https://img.shields.io/badge/arms-single%20%7C%20bimanual-2ea44f">
+  <img alt="Intel NPU" src="https://img.shields.io/badge/Intel%20NPU-OpenVINO%20FP16%20%7C%20INT8-0071C5">
+</p>
+
+<p align="center">
   <img src="docs/img/arms.gif" alt="SO-ARM101 과 OMX" width="880">
 </p>
 

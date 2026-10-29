@@ -1,5 +1,7 @@
 # Intel Core Ultra PC — OpenVINO 추론 · XPU 학습
 
+<b>한국어</b> · <a href="INTEL.en.md">English</a>
+
 Intel Core Ultra 노트북·미니PC(Ubuntu · Windows)에서 셋업·캘리브레이션·제어·수집·리뷰가 NVIDIA 기기(Thor 등)와 똑같이 되고,
 추론은 OpenVINO 로 **NPU** 에서 돌립니다. **Meteor Lake (Core Ultra 1세대) 이상**을 기준으로 합니다.
 OpenVINO 변환은 지금 **ACT · ACT2** 정책만 됩니다.
@@ -57,8 +59,8 @@ p95 가 프레임 예산(30 fps 면 33 ms) 안이고 오차가 작으면 **OK** 
 
 | 방법 | 어떻게 | 비고 |
 |---|---|---|
-| **HF Jobs (권장)** | 학습 탭 **실행 위치** 에서 HF Jobs GPU 선택 | 기기와 무관. 유료(시간당), Hub 로그인 필요. 끝나면 허브 탭에서 모델 받기 → 변환 |
 | **이 기기 Intel GPU (XPU)** | PyTorch XPU 휠 → 실행 위치 '이 기기' | lerobot 이 XPU 를 자동으로 고릅니다. Ubuntu · Windows 실기 확인, 느림(아래 실측) |
+| **HF Jobs** | 학습 탭 **실행 위치** 에서 HF Jobs GPU 선택 | 기기와 무관. 유료(시간당), Hub 로그인 필요. 끝나면 허브 탭에서 모델 받기 → 변환 |
 | **NVIDIA 기기** | Thor 등에서 학습 → 모델 탭 내보내기 → 이 기기에서 가져오기 | 위 2단계 |
 | 이 기기 CPU | 기본 설치 그대로 '이 기기' | 매우 느림. 동작 확인용 |
 

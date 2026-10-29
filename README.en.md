@@ -15,6 +15,12 @@
 </p>
 
 <p align="center">
+  <img alt="Windows native" src="https://img.shields.io/badge/Windows-native-0078D6">
+  <img alt="Single and bimanual" src="https://img.shields.io/badge/arms-single%20%7C%20bimanual-2ea44f">
+  <img alt="Intel NPU" src="https://img.shields.io/badge/Intel%20NPU-OpenVINO%20FP16%20%7C%20INT8-0071C5">
+</p>
+
+<p align="center">
   <img src="docs/img/arms.gif" alt="SO-ARM101 and OMX" width="880">
 </p>
 
@@ -85,9 +91,9 @@ Open **`http://<PC IP>:8080`** in a browser and the setup wizard guides you thro
 |---|---|
 | [User guide](docs/GUIDE.en.md) | Setup wizard, each screen, several arm sets, safety features, troubleshooting |
 | [Install · operation](docs/INSTALL.md) (Korean) | Install per OS, start/stop/autostart, updates, file locations, security |
-| [Intel NPU](docs/INTEL.md) (Korean) | OpenVINO conversion · NPU rollout, Intel integrated GPU training, measurements |
+| [Intel NPU](docs/INTEL.en.md) | OpenVINO conversion · NPU rollout, Intel integrated GPU training, measurements |
 | [Policies](docs/POLICIES.md) (Korean) | ACT · ACT2 · Diffusion · SmolVLA comparison, bimanual support |
-| [Windows support](docs/WINDOWS_PORT.md) (Korean) | How OS differences are handled, real-hardware check log |
+| [Windows support](docs/WINDOWS_PORT.en.md) | How OS differences are handled, real-hardware check log |
 | [Development](docs/DEVELOPMENT.md) (Korean) | Structure, design reasons, config format, decision criteria |
 
 ## License
