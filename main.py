@@ -6186,7 +6186,8 @@ async def ws_control(sock: WebSocket):
             while True:
                 t0 = time.monotonic()
                 any_arm = _first_arm()
-                err = next((a.err for a in ARMS.values() if a.err), "")
+                # 양팔이면 어느 팔에서 난 오류인지 앞에 붙입니다 (한쪽만 안 될 때 원인을 가리기 쉽게)
+                err = " / ".join((f"{a.side}: {a.err}" if BIMANUAL else a.err) for a in ARMS.values() if a.err)
                 if not err and t0 - note["t"] < NOTE_HOLD_S:
                     err = note["m"]
                 await sock.send_text(json.dumps({
