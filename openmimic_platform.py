@@ -271,6 +271,44 @@ def remove_dir(path) -> None:
     shutil.rmtree(path)
 
 
+def is_link(path) -> bool:
+    """심볼릭 링크이거나 (Windows) 디렉터리 정션인지. os.walk(followlinks=False) 는 정션을 링크로 보지 않고 들어가므로
+    폴더를 훑을 때(크기 계산·내보내기) 이걸로 걸러야 같은 파일을 두 번 셉니다."""
+    p = Path(path)
+    if p.is_symlink():
+        return True
+    isj = getattr(os.path, "isjunction", None)
+    return bool(IS_WIN and isj is not None and isj(p))
+
+
+def link_dir(link, target_name: str) -> None:
+    """link → 같은 폴더의 target_name 폴더를 가리키는 링크 (lerobot 의 checkpoints/last).
+    Linux: 상대 심볼릭 링크 — lerobot 과 같습니다.
+    Windows: 심볼릭 링크는 관리자 권한이나 개발자 모드가 있어야 만들 수 있어 보통 WinError 1314 로 실패합니다.
+    되면 심볼릭 링크, 안 되면 권한이 필요 없는 디렉터리 정션(절대 경로)을 만듭니다. 이미 있는 링크는 바꿉니다."""
+    link = Path(link)
+    if is_link(link):
+        try:
+            os.rmdir(link) if IS_WIN else link.unlink()      # Windows 의 폴더 링크·정션은 rmdir 로 (대상은 그대로)
+        except OSError:
+            link.unlink()
+    if not IS_WIN:
+        link.symlink_to(target_name)
+        return
+    try:
+        link.symlink_to(target_name, target_is_directory=True)
+        return
+    except OSError:
+        pass
+    import _winapi
+    _winapi.CreateJunction(str((link.parent / target_name).resolve()), str(link))
+
+
+# lerobot 학습 실행 명령 (python 다음 인자). Windows 는 checkpoints/last 심볼릭 링크를 만들 권한이 없어
+# 첫 체크포인트 저장 직후 학습이 죽으므로 openmimic_train.py 로 감싸 링크 만들기만 바꿉니다. Linux 는 지금까지와 같음.
+LEROBOT_TRAIN = [str(HERE / "openmimic_train.py")] if IS_WIN else ["-m", "lerobot.scripts.lerobot_train"]
+
+
 def job_alive(pid) -> bool:
     """pid 프로세스가 살아 있는지 (좀비 제외).
     주의: Windows 에서 os.kill(pid, 0) 은 '확인' 이 아니라 그 프로세스를 종료시킵니다 — 반드시 이 함수를 씁니다."""

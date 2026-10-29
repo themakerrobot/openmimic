@@ -41,6 +41,7 @@
 | `tools_jscheck.py` | 모든 페이지의 인라인 JS 를 `node --check` 로 파싱 검증 (`--en` 이면 영어 치환 후 검증) |
 | `openmimic_i18n_en.json` | 영어 화면 사전 — 한국어 조각 → 영어 (한/EN 버튼) |
 | `openmimic_health.py` | 서보 상태 감시 — 시작 전 전원 점검(`power_check` 계열)과 실행 중 온도·전압·보호 플래그 감시(`HealthGuard`) |
+| `openmimic_train.py` | Windows 학습 실행기 — lerobot-train 을 그대로 돌리되 `checkpoints/last` 링크만 정션으로 (Windows 는 심볼릭 링크 권한 없음) |
 | `openmimic_platform.py` | Linux / Windows 차이를 모은 곳 — 시리얼 포트·카메라 나열과 식별자 해석, 작업 프로세스 띄우기·중지·생존 확인, 공유 폴더, OS 별 안내 문구 |
 | `plugins/lerobot_robot_bi_omx/` | 양팔 OMX 팔로워 `bi_omx_follower` (lerobot 플러그인) |
 | `plugins/lerobot_teleoperator_bi_omx/` | 양팔 OMX 리더 `bi_omx_leader` |
@@ -172,6 +173,8 @@ Windows 에서 따로 챙긴 것:
   - 설정 등 바꿔치기는 `P.replace_file`, 읽기는 `P.read_text` 로 잠깐 다시 시도합니다.
   - 명령 파일은 `P.take_file`(이름 바꾸고 읽기)로 가져옵니다.
   - 데이터셋 이름 바꾸기·지우기는 `P.move_dir`·`P.remove_dir`(열린 파일이 있으면 통째로 실패)입니다.
+- **학습 체크포인트 링크**: lerobot 은 `checkpoints/last` 를 심볼릭 링크로 만드는데 Windows 는 권한이 없어 `WinError 1314` 로 학습이 죽습니다.
+  Windows 는 `openmimic_train.py`(`P.LEROBOT_TRAIN`)가 `update_last_checkpoint` 만 `P.link_dir`(심볼릭 링크 → 안 되면 디렉터리 정션)로 바꿔 lerobot 학습을 그대로 실행합니다.
 - **에피소드 저장(영상 인코딩)**: lerobot 은 저장 때마다 카메라 수만큼 `ProcessPoolExecutor` 로 인코딩합니다. Windows 는 spawn 이라
   작업자마다 새 파이썬이 `main.py`·torch·lerobot 을 다시 import 합니다(Linux 시험에서도 작업자당 약 3.7 초, Windows 는 실시간 검사까지 더해 더 김).
   수집 worker 는 `P.avoid_spawn_pools()` 로 이 프로세스의 `ProcessPoolExecutor` 를 `ThreadPoolExecutor` 로 바꿉니다 — PyAV 인코딩·PNG 읽기는 GIL 을 풀어

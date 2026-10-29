@@ -858,7 +858,8 @@ def icon_png(size):
 def dir_size(root: Path):
     """폴더의 총 바이트와 파일 수. 심볼릭 링크는 따라가지 않습니다 (중복 계산 방지)."""
     total = count = 0
-    for dirpath, _dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not P.is_link(Path(dirpath) / d)]   # Windows 정션(checkpoints/last)
         for name in filenames:
             f = Path(dirpath) / name
             if f.is_symlink():
@@ -3253,7 +3254,8 @@ def _tar_files(root: Path, skip=()):
     skip: 빼낼 하위 폴더 (root 기준 상대경로, 예: 'openvino/cache')"""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         rel_dir = Path(dirpath).relative_to(root).as_posix()
-        dirnames[:] = [d for d in dirnames if (f"{rel_dir}/{d}" if rel_dir != "." else d) not in skip]
+        dirnames[:] = [d for d in dirnames if (f"{rel_dir}/{d}" if rel_dir != "." else d) not in skip
+                       and not P.is_link(Path(dirpath) / d)]      # Windows 정션(checkpoints/last)은 같은 파일이라 뺌
         dirnames.sort()
         for name in sorted(filenames):
             f = Path(dirpath) / name
@@ -4386,7 +4388,7 @@ async def api_train(req: Request):
         else:
             return JSONResponse({"error": f"{name}_2 ~ _999 가 모두 존재합니다 — 이름을 바꾸세요"},
                                 status_code=400)
-    argv = [sys.executable, "-m", "lerobot.scripts.lerobot_train",
+    argv = [sys.executable, *P.LEROBOT_TRAIN,
             f"--dataset.repo_id=local/{ds}", f"--dataset.root={root}",
             *pargs, f"--output_dir={out}",
             f"--steps={steps}", f"--batch_size={batch}", "--num_workers=4",
@@ -4565,7 +4567,7 @@ def run_info(run, trials=None):
     cdir = rd / "checkpoints"
     for st in sorted(cdir.iterdir()) if cdir.is_dir() else []:
         pm = st / "pretrained_model"
-        if st.name == "last" or st.is_symlink() or not (pm / "config.json").is_file():
+        if st.name == "last" or P.is_link(st) or not (pm / "config.json").is_file():
             continue
         rel = f"{run}/checkpoints/{st.name}/pretrained_model"
         cks.append({"step": st.name, "rel": rel, "ov": openmimic_ov.status(OUT_ROOT / rel)["state"],
@@ -4586,6 +4588,13 @@ def run_info(run, trials=None):
             pass
     if jobs:
         step, loss = _log_last_metrics(jobs[0]["log"])
+    if cks and not alive and not (cdir / "last").exists() and not P.is_link(cdir / "last") \
+            and (cdir / cks[-1]["step"] / "training_state").is_dir():
+        # 예전 판의 Windows 학습은 last 링크를 못 만들고 끝났습니다 — 마지막 체크포인트로 이어 줘 '이어서 학습' 이 되게
+        try:
+            P.link_dir(cdir / "last", cks[-1]["step"])
+        except OSError:
+            pass
     last_state = rd / "checkpoints" / "last" / "training_state"
     done_step = load_json(last_state / "training_step.json", {}).get("step")
     if done_step is None and cks and cks[-1]["step"].isdigit():
@@ -4913,7 +4922,7 @@ async def api_train_resume(req: Request):
     steps = _clamp_int(b.get("steps"), 0, 1, 100000000)
     if steps <= done:
         return JSONResponse({"error": f"목표 step 은 지금({done})보다 커야 합니다"}, status_code=400)
-    argv = [sys.executable, "-m", "lerobot.scripts.lerobot_train", f"--config_path={tc}", "--resume=true",
+    argv = [sys.executable, *P.LEROBOT_TRAIN, f"--config_path={tc}", "--resume=true",
             f"--steps={steps}", f"--output_dir={OUT_ROOT / run}"]
     try:
         jid = start_job("train", argv)
@@ -5662,7 +5671,7 @@ async def api_delete_checkpoint(req: Request):
         if step == "last":
             return JSONResponse({"error": "last는 심볼릭 링크 — 숫자 체크포인트를 선택하세요"}, status_code=400)
         raw = OUT_ROOT / run / "checkpoints" / step
-    if raw.is_symlink():
+    if P.is_link(raw):
         return JSONResponse({"error": "심볼릭 링크는 삭제하지 않음"}, status_code=400)
     target = raw.resolve()
     # rel='/checkpoints/x' 처럼 run 이 비면 target 이 outputs 자체가 됩니다 — 반드시 막습니다

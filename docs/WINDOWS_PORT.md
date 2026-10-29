@@ -86,6 +86,15 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
   읽기도 `P.read_text` 로 잠깐 다시 시도합니다 — 읽기 실패를 '파일 없음' 으로 보고 기본값을 저장하면 설정이 지워지기 때문입니다.
   `os.replace` 를 쓰던 곳은 모두 바꿨습니다 (설정·환경·캘리브레이션 파일, 수집·롤아웃 상태와 미리보기, 가상 장치 상태, OpenVINO 메타, 전원 기록).
 
+**학습이 첫 체크포인트 저장 직후 죽음 (`WinError 1314`).**
+
+- 원인: lerobot 은 체크포인트를 저장할 때마다 `checkpoints/last` 를 심볼릭 링크로 만듭니다. Windows 는 관리자 권한이나 개발자 모드가 없으면
+  심볼릭 링크를 만들 수 없습니다. 체크포인트(`005000` 등)는 다 쓴 뒤라 남지만, 학습이 `save_freq` 보다 길면 거기서 멈추고 '이어서 학습' 도 안 됩니다.
+- 고친 방법: Windows 는 학습을 `openmimic_train.py` 로 띄웁니다(`P.LEROBOT_TRAIN`). lerobot 의 `update_last_checkpoint` 만
+  `P.link_dir` 로 바꿔 끼우고 `lerobot_train` 을 그대로 실행합니다 — 되면 심볼릭 링크, 안 되면 권한이 필요 없는 디렉터리 정션.
+  예전 판으로 학습해 `last` 가 없는 모델은 모델 목록을 볼 때 마지막 체크포인트로 이어 줍니다.
+  정션은 `os.walk(followlinks=False)` 가 들어가므로 크기 계산·내보내기에서 `P.is_link` 로 뺍니다.
+
 **에피소드 하나 저장이 1분을 넘음 (카메라 3대).**
 
 - 원인: lerobot 은 저장 때마다 카메라 수만큼 `ProcessPoolExecutor` 로 영상을 인코딩합니다. Windows 는 fork 가 없어(spawn)
