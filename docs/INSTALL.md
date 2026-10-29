@@ -226,6 +226,17 @@ pip install "openvino>=2025.4" "nncf>=2.19"
 
 패키지를 설치했으면 `./openmimic.sh restart` 로 다시 켜고, 브라우저는 강력 새로고침(Ctrl+Shift+R) 하세요.
 
+예전에 설치한 기기를 인터넷 없이 쓰려면, 새 설치 스크립트가 미리 받아 두는 ACT 백본 가중치를 한 번 받아 두세요 (약 45 MB).
+3D 화면·학습 그래프 라이브러리는 업데이트로 레포의 `vendor/` 에 들어옵니다.
+
+```bash
+source activate.sh && python -c "import torchvision; torchvision.models.resnet18(weights='IMAGENET1K_V1')"
+```
+
+```powershell
+. .\activate.ps1; python -c "import torchvision; torchvision.models.resnet18(weights='IMAGENET1K_V1')"
+```
+
 ## 파일이 놓이는 곳
 
 | 무엇 | 경로 (`~/project/openmimic/` 아래) |

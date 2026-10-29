@@ -2611,7 +2611,8 @@ CSS = """
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet">
+<!-- 웹 글꼴은 화면을 막지 않게 뒤에서 받습니다 — 인터넷이 없는 망에서는 연결 대기 동안 화면이 늦게 뜨므로. 못 받으면 시스템 글꼴 -->
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" media="print" onload="this.media='all'">
 <style>
 :root{
   --bg:#0f1216; --surface:#161b21; --surface2:#1b222a; --line:#28303a;
@@ -4238,7 +4239,7 @@ def train_page():
     </div>
     <div id=tailbox style="display:none"><p class=eyebrow>로그</p><pre id=tail>...</pre></div>
     </div>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="/vendor/chart/chart.umd.js"></script>
     <script>
     const POL={js({k: v["hint"] for k, v in TRAIN_POLICIES.items()})};
     const MISS={js({k: policy_missing(k) for k in TRAIN_POLICIES})};
@@ -4320,7 +4321,7 @@ def train_page():
       document.getElementById('nochart').style.display=(has||d.tail)?'none':'';
       if(!has && !chart) return;
       const xs=d.points.map(p=>p[0]),ys=d.points.map(p=>p[1]);
-      if(!window.Chart) return;              // CDN 을 못 받으면(오프라인) 그래프만 생략
+      if(!window.Chart) return;              // 스크립트를 못 받으면 그래프만 생략
       if(!chart){{chart=new Chart(document.getElementById('chart'),{{type:'line',
         data:{{labels:xs,datasets:[{{label:'loss',data:ys,borderColor:'#5d9dd6',
           backgroundColor:'rgba(93,157,214,.08)',fill:true,pointRadius:c=>(c.dataset.data.length<20?3:0),borderWidth:1.5}}]}},
@@ -5803,10 +5804,10 @@ button.estop{{background:#4a2020;border-color:var(--bad);color:#ffc9c9;font-fami
   </div>
 </div>
 <script type="importmap">
-{{"imports":{{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-"three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-"three/examples/jsm/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-"urdf-loader":"https://cdn.jsdelivr.net/npm/urdf-loader@0.12.6/src/URDFLoader.js"}}}}
+{{"imports":{{"three":"/vendor/three/build/three.module.js",
+"three/addons/":"/vendor/three/examples/jsm/",
+"three/examples/jsm/":"/vendor/three/examples/jsm/",
+"urdf-loader":"/vendor/urdf-loader/URDFLoader.js"}}}}
 </script>
 <script type="module">
 const JOINTS = {js(CTL_JOINTS)};
@@ -6347,6 +6348,19 @@ def stream_cam(cam: str):
 
 
 # URDF 정적 서빙
+VENDOR_DIR = Path(__file__).resolve().parent / "vendor"     # three.js · urdf-loader · Chart.js 사본 — 인터넷 없이 3D·그래프
+
+
+@app.get("/vendor/{rest:path}")
+def serve_vendor(rest: str):
+    p = (VENDOR_DIR / rest).resolve()
+    if not _within(p, VENDOR_DIR) or not p.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    # Windows 의 mimetypes 는 레지스트리를 따라 .js 를 text/plain 으로 줄 수 있는데, 그러면 브라우저가 ES 모듈을 거부합니다
+    mt = "text/javascript" if p.suffix == ".js" else None
+    return FileResponse(p, media_type=mt, headers={"Cache-Control": "public, max-age=86400"})
+
+
 @app.get("/urdf/{rest:path}")
 def serve_urdf(rest: str):
     p = (URDF_DIR / rest).resolve()
@@ -7264,10 +7278,10 @@ jget('/api/projects').then(paint);
 
 
 IMPORTMAP_HTML = """<script type="importmap">
-{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-"three/addons/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-"three/examples/jsm/":"https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/",
-"urdf-loader":"https://cdn.jsdelivr.net/npm/urdf-loader@0.12.6/src/URDFLoader.js"}}
+{"imports":{"three":"/vendor/three/build/three.module.js",
+"three/addons/":"/vendor/three/examples/jsm/",
+"three/examples/jsm/":"/vendor/three/examples/jsm/",
+"urdf-loader":"/vendor/urdf-loader/URDFLoader.js"}}
 </script>"""
 
 # 읽기 전용 3D 뷰어 (리뷰 재생 · 셋업 마법사 확인 단계). 제어 탭과 같은 좌표·색 규칙.
@@ -7848,7 +7862,7 @@ async function mount3D(leg){
   el.innerHTML=leg?legend(leg):'';
   try{ const v={}; v[SLOT.side]={x:0,y:0,yaw_deg:0}; const a=await window.mountArm3D(el,[SLOT.side],v,W.kind3d);
        if(STEP!==my || $('w3d')!==el) return null; ARMSIDE=SLOT.side; ARM=a; return a; }
-  catch(e){ console.error(e); ARM=null; el.innerHTML='<p class=muted style="padding:14px">3D 를 불러오지 못했습니다 (인터넷 연결 필요) — 표의 숫자로 확인하세요.</p>'; return null; }
+  catch(e){ console.error(e); ARM=null; el.innerHTML='<p class=muted style="padding:14px">3D 를 불러오지 못했습니다 (브라우저가 WebGL 을 지원하는지 확인) — 표의 숫자로 확인하세요.</p>'; return null; }
 }
 function hlDiag(levels){
   const m={}; JOINTS.forEach(j=>{ const l=levels[j]; m[j]=l==='MISSING'||l==='FAIL'?C_BAD:l==='WARN'?C_WARN:l?C_OK:null; }); return m;

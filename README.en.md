@@ -39,7 +39,7 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
 ## What makes it different
 
 - **Zero commands** — finding ports, motor diagnosis, calibration, recording, training and rollout all happen on screen. The setup wizard guides you step by step.
-- **On-device by default** — setup · collect · training · rollout all run on one PC next to the robot, and the data stays there. After installation it works without internet (except the 3D view — see the [user guide](docs/GUIDE.en.md#troubleshooting)).
+- **On-device by default** — setup · collect · training · rollout all run on one PC next to the robot, and the data stays there. Once installed, it runs without internet.
 - **NPU rollout** — trained models are converted to OpenVINO **FP16 · INT8** and run on the Intel Core Ultra **NPU**.
   The conversion measures error against PyTorch and inference time on each device.
 - **Cloud GPU when you need it** — if training takes too long on your PC, rent a Hugging Face cloud GPU (HF Jobs) by the hour just for that and start it with one click

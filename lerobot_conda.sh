@@ -323,6 +323,11 @@ print("lerobot :", "OK (so_follower / bi_so_follower / feetech / omx / bi_omx / 
 print("fastapi :", fastapi.__version__, "| cv2:", cv2.__version__, "| av:", av.__version__)
 PY
 
+# 설치가 끝나면 인터넷 없이 쓸 수 있게 — ACT 가 처음 학습할 때 받는 ImageNet 백본을 미리 받아 둡니다 (실패해도 계속)
+log "5-1. 오프라인 대비: ACT 백본 ResNet18 ImageNet 가중치 (약 45MB)"
+TORCH_HOME="${DATA_DIR}/torch" python -c "import torchvision; torchvision.models.resnet18(weights='IMAGENET1K_V1'); print('resnet18 OK')" \
+  || warn "ResNet18 가중치를 받지 못했습니다 — 처음 학습할 때 받거나, 인터넷이 없으면 학습 화면의 'ImageNet 백본 없이' 를 켜세요"
+
 # ------------------------------------------------------------ 6. 활성화 헬퍼
 log "6. activate.sh"
 # 경로를 $HOME 기준으로 남깁니다 — 절대경로를 박으면 기기마다 파일이 달라져

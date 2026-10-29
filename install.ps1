@@ -309,9 +309,16 @@ print("COM 포트:", [p.device for p in lp.comports()] or "없음")
 '@
 if ((Invoke-Py $Verify) -ne 0) { Die "최종 검증 실패 (위 오류 확인)" }
 
+# 설치가 끝나면 인터넷 없이 쓸 수 있게 — ACT 가 처음 학습할 때 받는 ImageNet 백본을 미리 받아 둡니다 (실패해도 계속)
+Log "5-1. 오프라인 대비: ACT 백본 ResNet18 ImageNet 가중치 (약 45MB)"
+$env:TORCH_HOME = Join-Path $DataDir 'torch'
+if ((Invoke-Py "import torchvision; torchvision.models.resnet18(weights='IMAGENET1K_V1'); print('resnet18 OK')") -ne 0) {
+    Warn "ResNet18 가중치를 받지 못했습니다 — 처음 학습할 때 받거나, 인터넷이 없으면 학습 화면의 'ImageNet 백본 없이' 를 켜세요"
+}
+
 # ------------------------------------------------------------------- 완료
 Log "완료"
-$trainNote = if ($env:TORCH_LOCAL -eq 'xpu') { '학습은 이 기기 Intel GPU(XPU)로 됩니다 (실험적) — 느리면 학습 탭 실행 위치에서 HF Jobs 를 고르세요.' } else { '학습은 학습 탭 실행 위치에서 HF Jobs 를 고르세요 (Intel GPU 학습: $env:OPENMIMIC_TORCH=''xpu'' 로 다시 설치 — 실험적).' }
+$trainNote = if ($env:TORCH_LOCAL -eq 'xpu') { '학습은 이 기기 Intel GPU(XPU)로 됩니다 — 내장 GPU 라 느리니 긴 학습은 학습 탭 실행 위치에서 HF Jobs 를 고르세요.' } else { '이 기기 학습은 CPU 라 매우 느립니다 — Intel GPU(XPU)로 학습하려면 $env:OPENMIMIC_TORCH=''xpu'' 로 다시 설치하거나, 학습 탭 실행 위치에서 HF Jobs 를 고르세요.' }
 $torchNote = if ($Platform -eq 'win-intel') { " (torch 휠: $(if ($env:TORCH_LOCAL) { $env:TORCH_LOCAL } else { '기본' }))" } else { '' }
 @"
 
