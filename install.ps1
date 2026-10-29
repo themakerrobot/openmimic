@@ -245,7 +245,7 @@ try {
 
 # 영상은 PyAV 로 통일합니다 (Linux 판과 같음 — torchcodec 은 플랫폼별 FFmpeg DLL 의존이 달라 지웁니다)
 Pip @('uninstall', '-y', 'torchcodec') | Out-Null
-# TODO(win-verify): Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 들어 있는지 — 수집 영상 인코딩
+# Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 들어 있음을 실기 수집 로그로 확인했습니다 ('Using video codec: libsvtav1')
 if ((Pip @('install', 'av>=15.0.0,<16.0.0')) -ne 0) { Die "av 설치 실패" }
 
 Log "4-2. OpenMimic 의존성"

@@ -153,7 +153,6 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | `openmimic_platform.py` `replace_file` · `read_text` | 2 초 다시 시도로 충분한지 (Defender 검사가 더 길면 저장 실패가 남음) |
 | `install.ps1` XPU | 휠 설치·장치 인식은 확인 (`2.11.0+xpu`, `xpu: True`, Arc 140V). **학습이 실제로 도는지**는 아직 |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
-| `install.ps1` PyAV | Windows PyAV 휠의 FFmpeg 에 lerobot 기본 코덱(libsvtav1)이 있는지 — 수집 영상 인코딩 |
 | `install.ps1` OpenVINO | OpenVINO 가 `CPU GPU NPU` 를 잡는 것은 확인. `openmimic_ov` 변환·NPU 추론은 아직 |
 | `openmimic.ps1` autostart | 시작프로그램 바로 가기로 로그인 때 켜지는지 |
 
@@ -161,7 +160,7 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 
 | 항목 | 결과 | 근거 |
 |---|---|---|
-| 영상 인코딩·디코딩 | **우회 (설계상 PyAV 강제) · Windows 실행 미확인** | 설치 스크립트가 양쪽 OS 모두 `torchcodec` 을 지웁니다. lerobot `e40b58a` 는 torchcodec 이 없으면 디코딩을 PyAV 로 바꾸고, 인코딩은 원래 PyAV 입니다. Windows PyAV 휠에 libsvtav1 이 있는지는 확인하지 못했습니다 |
+| 영상 인코딩·디코딩 | **됨 (설계상 PyAV 강제)** | 설치 스크립트가 양쪽 OS 모두 `torchcodec` 을 지웁니다. lerobot `e40b58a` 는 torchcodec 이 없으면 디코딩을 PyAV 로 바꾸고(`'torchcodec' is not available … falling back to 'pyav'` 경고는 정상), 인코딩은 원래 PyAV 입니다. Windows 실기 수집 로그에서 `Using video codec: libsvtav1` 확인 |
 | lerobot `find_cameras()` | **우회** | Windows 에서는 인덱스 0~N 을 기본 백엔드로 하나씩 열어 봐 느리고, 안정 식별자가 없습니다. OpenMimic 은 DirectShow 나열(pygrabber → ffmpeg)을 먼저 쓰고, 둘 다 안 될 때만 `find_cameras()` 로 내려갑니다. 열 때는 인덱스 + `CAP_DSHOW` 를 lerobot 카메라 설정 `backend` 로 넘깁니다 |
 | OpenVINO NPU (`openmimic_ov.py`) | **장치 인식 됨 · 변환·추론 미확인** | Windows 실기에서 OpenVINO 2026.4 가 `['CPU', 'GPU', 'NPU']` 를 잡았습니다. 변환·추론 코드에는 OS 의존이 없습니다 (경로·장치 이름만 씀) |
 | `OPENMIMIC_TORCH=xpu` Windows | **설치 됨 · 학습 미확인 — 실험적으로 둠** | CPU 휠로 설치한 뒤 `xpu` 로 다시 돌리면 CPU 휠을 지우고 `torch 2.11.0+xpu` 를 설치했고, `torch.xpu.is_available()` 이 True, 장치 `Intel(R) Arc(TM) 140V GPU` 입니다. lerobot 설치 뒤에도 XPU 휠이 유지됐습니다 |
