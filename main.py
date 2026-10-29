@@ -329,7 +329,8 @@ _START_PATHS = {"/api/record", "/api/rollout", "/api/train", "/api/setup/probe",
                 "/api/wizard/verify/start", "/api/wizard/import_calib", "/api/wizard/mode",
                 "/api/setup/config", "/api/calib/start", "/api/calib/factory", "/api/wizard/robot",
                 "/api/envs/activate", "/api/envs/save_as", "/api/ov/convert",
-                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull"}
+                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull",
+                "/api/projects/save", "/api/projects/activate", "/api/projects/delete"}
 _START_PREFIXES = ("/api/install/", "/api/dataset/repair/")
 _START_GATE = asyncio.Lock()
 
@@ -640,12 +641,53 @@ def rename_env(old, new):
 
 
 def delete_env(name):
-    if name == env_name():
-        raise ValueError("사용 중인 환경은 지울 수 없습니다 — 다른 환경으로 전환한 뒤 지우세요")
+    """환경을 지웁니다. 사용 중인 환경이면 먼저 다른 환경(default 우선)으로 전환합니다.
+    캘리브레이션 파일·데이터셋은 그대로 둡니다."""
     f = _env_file(name)
     if not f.exists():
         raise ValueError(f"환경 없음: {name}")
+    if name == env_name():
+        _switch_away(name)
     f.unlink()
+
+
+def _switch_away(name):
+    """name 이 아닌 환경으로 전환 — default 를 먼저, 없거나 설정이 맞지 않으면 다른 환경."""
+    others = [DEFAULT_ENV] + sorted(x.stem for x in ENV_DIR.glob("*.json"))
+    for e in others:
+        if e != name and safe_name(e) and _env_file(e).exists():
+            try:
+                activate_env(e)
+                return
+            except ValueError:
+                continue
+    raise ValueError("남은 환경이 없어 지울 수 없습니다 — 새 환경(또는 새 프로젝트)을 먼저 만드세요")
+
+
+def blank_env_config(name, robot, mode, task=""):
+    """새 프로젝트용 빈 환경 — 포트·카메라 없이, 캘리브 id 는 '<이름>_follower' 처럼 프로젝트마다 따로 둡니다.
+    그래서 새 프로젝트는 셋업(포트 → 캘리브레이션 → 확인)을 처음부터 합니다."""
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    cfg.update({"robot": robot, "mode": mode, "env_name": name, "cameras": {}})
+    if task:
+        cfg["default_task"] = task
+    sides = ("main",) if mode == "single" else ("left", "right")
+    cfg["arms"] = [{"side": sd, "follower_port": "", "leader_port": "",
+                    "follower_id": f"{name}_follower" + ("" if sd == "main" else f"_{sd}"),
+                    "leader_id": f"{name}_leader" + ("" if sd == "main" else f"_{sd}"),
+                    "cameras": {}} for sd in sides]
+    return cfg
+
+
+def create_env(name, robot, mode, task=""):
+    if _env_file(name).exists():
+        raise ValueError(f"이미 있는 환경 이름: {name}")
+    cfg = blank_env_config(name, robot, mode, task)
+    err = validate_config(cfg)
+    if err:
+        raise ValueError(f"새 환경 설정 오류: {err}")
+    ENV_DIR.mkdir(parents=True, exist_ok=True)
+    save_json(_env_file(name), cfg)
 
 
 def leave_old_sim_env():
@@ -2825,12 +2867,16 @@ def projects_view():
     runs = {p.name for p in OUT_ROOT.iterdir() if p.is_dir()} if OUT_ROOT.exists() else set()
     assigned = set()
     meta = load_dsmeta()
+    envs = {e["name"]: e for e in list_envs()}
     out = []
     for name, pr in d["projects"].items():
         ds = [dsets[x] for x in pr["datasets"] if x in dsets]
         assigned.update(x["name"] for x in ds)
         latest = max(ds, key=lambda x: meta.get(x["name"], {}).get("created", ""), default=None)
+        ei = envs.get(pr["env"]) or {}
         out.append({"name": name, "task": pr["task"], "env": pr["env"],
+                    "env_robot": ei.get("robot", ""), "env_mode": ei.get("mode", ""),
+                    "env_missing": bool(pr["env"]) and not ei,
                     "datasets": [{"name": x["name"], "episodes": x["episodes"]} for x in ds],
                     "episodes": sum(x["episodes"] for x in ds if isinstance(x["episodes"], int)),
                     "models": [{"name": m, "has_ckpt": m in ckpt_runs} for m in pr["models"] if m in runs],
@@ -2839,7 +2885,8 @@ def projects_view():
     out.sort(key=lambda x: x["updated"], reverse=True)
     unassigned = [{"name": n, "episodes": x["episodes"]} for n, x in dsets.items() if n not in assigned]
     return {"active": d["active"], "projects": out, "unassigned": unassigned,
-            "envs": [e["name"] for e in list_envs()], "env": env_name(),
+            "envs": list(envs), "env": env_name(),
+            "robots": {k: v["label"] for k, v in ROBOT_KINDS.items()}, "robot_now": robot_key(),
             "all": {"datasets": len(dsets),
                     "episodes": sum(x["episodes"] for x in dsets.values() if isinstance(x["episodes"], int)),
                     "models": len(runs)}}
@@ -2857,18 +2904,33 @@ async def api_project_save(req: Request):
     old = (b.get("old") or "").strip()
     if not safe_name(name):
         return JSONResponse({"error": "프로젝트 이름은 영문/숫자/._- 만"}, status_code=400)
-    env = (b.get("env") or "").strip()
-    if env and not safe_name(env):
-        return JSONResponse({"error": "환경 이름 오류"}, status_code=400)
     d = load_projects()
     if old and old not in d["projects"]:
         return JSONResponse({"error": f"프로젝트 없음: {old}"}, status_code=400)
     if name != old and name in d["projects"]:
         return JSONResponse({"error": f"이미 있는 프로젝트: {name}"}, status_code=400)
-    pr = d["projects"].pop(old) if old else {"datasets": [], "models": [],
-                                             "created": time.strftime("%Y-%m-%d %H:%M")}
-    pr["task"] = (b.get("task") or "").strip()[:300]
-    pr["env"] = env
+    task = (b.get("task") or "").strip()[:300]
+    # 프로젝트 = 환경 하나. 새 프로젝트는 같은 이름의 빈 환경을 만들고, 이름을 바꾸면 그 환경 이름도 같이 바꿉니다
+    if not old or name != old:
+        if _env_file(name).exists():
+            return JSONResponse({"error": f"같은 이름의 환경 '{name}' 이 이미 있습니다 — 다른 프로젝트 이름을 쓰거나 "
+                                          "셋업 › 환경에서 그 환경을 지운 뒤 만드세요"}, status_code=400)
+    busy = exclusive_busy()
+    if busy and (b.get("activate") or (old and name != old and d["projects"][old].get("env") == env_name())):
+        return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
+    if not old:
+        robot = b.get("robot") or robot_key()
+        mode = b.get("mode") or "single"
+        if robot not in ROBOT_KINDS or mode not in ("single", "bimanual"):
+            return JSONResponse({"error": "기종·구성 값이 잘못됐습니다"}, status_code=400)
+        try:
+            await asyncio.to_thread(create_env, name, robot, mode, task)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
+        pr = {"datasets": [], "models": [], "created": time.strftime("%Y-%m-%d %H:%M"), "env": name}
+    else:
+        pr = d["projects"].pop(old)
+    pr["task"] = task
     _touch(pr)
     d["projects"][name] = pr
     if old and d["active"] == old:
@@ -2876,6 +2938,13 @@ async def api_project_save(req: Request):
     if not old and b.get("activate"):
         d["active"] = name
     save_projects(d)
+    try:
+        if old and name != old and pr.get("env") == old and _env_file(old).exists():
+            await asyncio.to_thread(rename_env, old, name)       # 프로젝트·데이터셋의 환경 기록도 같이 바뀝니다
+        if not old and b.get("activate"):
+            await asyncio.to_thread(activate_env, name)
+    except ValueError as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
     return await asyncio.to_thread(projects_view)
 
 
@@ -2886,6 +2955,19 @@ async def api_project_activate(req: Request):
     d = load_projects()
     if name and name not in d["projects"]:
         return JSONResponse({"error": f"프로젝트 없음: {name}"}, status_code=400)
+    env = d["projects"][name].get("env", "") if name else ""
+    if env and env != env_name():
+        # 프로젝트를 열면 그 프로젝트의 환경(포트·캘리브레이션·카메라)으로 바꿉니다. 환경 파일이 지워졌으면 빈 환경을 다시 만듭니다
+        busy = exclusive_busy()
+        if busy:
+            return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 여세요 (프로젝트를 열면 환경이 바뀝니다)"},
+                                status_code=400)
+        try:
+            if not _env_file(env).exists() and safe_name(env):
+                await asyncio.to_thread(create_env, env, robot_key(), CFG["mode"], d["projects"][name].get("task", ""))
+            await asyncio.to_thread(activate_env, env)
+        except ValueError as e:
+            return JSONResponse({"error": str(e)}, status_code=400)
     d["active"] = name
     save_projects(d)
     return await asyncio.to_thread(projects_view)
@@ -2898,11 +2980,26 @@ async def api_project_delete(req: Request):
     name = (b.get("name") or "").strip()
     if name not in d["projects"]:
         return JSONResponse({"error": f"프로젝트 없음: {name}"}, status_code=400)
+    env = d["projects"][name].get("env", "")
+    # 프로젝트 자기 환경(같은 이름, 다른 프로젝트가 안 씀)이면 같이 지웁니다. 캘리브레이션 파일·데이터셋·모델은 남깁니다
+    own = (env == name and _env_file(env).exists()
+           and not any(p.get("env") == env for n, p in d["projects"].items() if n != name))
+    note = ""
+    if own:
+        busy = exclusive_busy() if env == env_name() else None
+        if busy:
+            return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 지우세요"}, status_code=400)
+        try:
+            await asyncio.to_thread(delete_env, env)
+        except ValueError as e:
+            note = f"프로젝트는 지웠고 환경은 남겼습니다 ({env}): {e}"
     del d["projects"][name]
     if d["active"] == name:
         d["active"] = ""
     save_projects(d)
-    return await asyncio.to_thread(projects_view)
+    v = await asyncio.to_thread(projects_view)
+    v["note"] = note
+    return v
 
 
 @app.post("/api/projects/assign")
@@ -3024,7 +3121,7 @@ def index(request: Request, all: int = 0):
                  f'기존 데이터셋은 <a href="/?all=1">전체 보기</a>에서 옮기세요.</td></tr>')
     if pname:
         head = (f'<p class=eyebrow>프로젝트 · {esc(pname)}</p><h2>데이터셋</h2>'
-                f'<p class=muted>{esc(pr["task"]) or "<i>태스크 설명 없음</i>"} · 기준 환경 '
+                f'<p class=muted>{esc(pr["task"]) or "<i>태스크 설명 없음</i>"} · 환경 '
                 f'<span class=mono>{esc(pr["env"] or "지정 안 함")}</span>'
                 + (f' <span class="badge b-warn">지금 환경은 {esc(cur_env)}</span>' if pr["env"] and pr["env"] != cur_env else "")
                 + (f' · <a href="/">이 프로젝트만 보기</a>' if show_all else f' · <a href="/?all=1">전체 보기</a>')
@@ -3408,8 +3505,8 @@ def collect_page(resume: str = ""):
         projline = (f'<p class=muted>프로젝트 <b class=mono>{esc(pname)}</b> · 환경 <b class=mono>{esc(env_name())}</b>'
                     f' — 새 데이터셋은 이 프로젝트에 자동으로 들어갑니다.</p>')
         if pr["env"] and pr["env"] != env_name():
-            projline += (f'<p class="badge b-warn">이 프로젝트의 기준 환경은 {esc(pr["env"])} 인데 지금은 {esc(env_name())} 입니다 — '
-                         f'<a href="/setup#envcard">셋업에서 전환</a>하거나 그대로 진행하세요.</p>')
+            projline += (f'<p class="badge b-warn">이 프로젝트의 환경은 {esc(pr["env"])} 인데 지금은 {esc(env_name())} 입니다 — '
+                         f'<a href="/projects">프로젝트</a>에서 다시 열면 그 환경으로 바뀝니다.</p>')
     else:
         projline = (f'<p class=muted>환경 <b class=mono>{esc(env_name())}</b> · 프로젝트 없이 수집합니다 — '
                     f'<a href="/projects">프로젝트</a>를 열면 태스크 설명과 이름이 채워지고 데이터셋이 묶입니다.</p>')
@@ -6969,9 +7066,10 @@ PROJECTS_HTML = """
 </style>
 <div class=wrap>
 <p class=eyebrow>태스크별 묶음</p><h2>프로젝트</h2>
-<p class=muted style="max-width:860px">프로젝트는 태스크 하나의 묶음입니다 — 데이터셋, 학습된 모델, 기본 태스크 설명, 기준 환경.
-프로젝트를 <b>열면</b> 데이터셋 · 수집 · 학습 · 실행 탭이 그 프로젝트 기준으로 보이고,
-새로 수집한 데이터셋과 새로 학습한 모델이 자동으로 들어갑니다. <b>전체</b>를 열면 프로젝트 없이 지금처럼 모두 보입니다.</p>
+<p class=muted style="max-width:860px">프로젝트는 태스크 하나의 묶음입니다 — 데이터셋, 학습된 모델, 기본 태스크 설명, 그리고 <b>프로젝트 전용 환경</b>
+(기종·한팔/양팔·포트·캘리브레이션·카메라). 새 프로젝트를 만들면 같은 이름의 빈 환경이 생기고, 셋업 마법사에서 팔 연결부터 처음 합니다.
+프로젝트를 <b>열면</b> 그 환경으로 바뀌고, 데이터셋 · 수집 · 학습 · 실행 탭이 그 프로젝트 기준으로 보이며
+새로 수집한 데이터셋과 새로 학습한 모델이 자동으로 들어갑니다. <b>전체</b>를 열면 프로젝트 없이 모두 보입니다 (환경은 그대로).</p>
 <div id=pform></div>
 <div class=pgrid id=pgrid></div>
 <div id=unassigned style="margin-top:22px"></div>
@@ -7000,11 +7098,13 @@ function paint(v){
   v.projects.forEach(p=>{
     const on=v.active===p.name;
     const c=mk('div','pcard'+(on?' on':''));
-    const envWarn = p.env && p.env!==v.env ? ' <span class="badge b-warn" title="지금 환경: '+E(v.env)+'">환경 다름</span>' : '';
+    const envWarn = p.env_missing ? ' <span class="badge b-warn">환경 없음 — 열면 새로 만듦</span>'
+      : (p.env && p.env!==v.env ? ' <span class="badge b-warn" title="지금 환경: '+E(v.env)+'">열면 이 환경으로 바뀜</span>' : '');
+    const envInfo = p.env_robot ? ' · '+E((v.robots||{})[p.env_robot]||p.env_robot)+' · '+(p.env_mode==='bimanual'?'양팔':'한팔') : '';
     c.innerHTML='<canvas width=170 height=128></canvas><div class=pb>'
       +'<h3><span class=mono>'+E(p.name)+'</span>'+(on?' <span class="badge b-ok">열림</span>':'')+'</h3>'
       +'<div class=meta>'+(p.task?E(p.task):'<i>태스크 설명 없음</i>')+'</div>'
-      +'<div class=meta>환경 <span class=mono>'+E(p.env||'지정 안 함')+'</span>'+envWarn+'</div>'
+      +'<div class=meta>환경 <span class=mono>'+E(p.env||'지정 안 함')+'</span>'+envInfo+envWarn+'</div>'
       +'<div class=meta>데이터셋 '+p.datasets.length+' · 에피소드 '+p.episodes+' · 모델 '+p.models.length
       +(p.updated?' · 수정 '+E(p.updated):'')+'</div><div class=acts></div></div>';
     const a=c.querySelector('.acts');
@@ -7028,19 +7128,29 @@ function paint(v){
 }
 function form(p){
   const f=$('pform');
-  const envOpts='<option value="">지정 안 함</option>'+V.envs.map(e=>'<option'+((p?p.env:V.env)===e?' selected':'')+'>'+E(e)+'</option>').join('');
+  const robots=Object.entries(V.robots||{}).map(([k,l])=>'<option value="'+E(k)+'">'+E(l)+'</option>').join('');
+  const envPart=p
+    ? '<label class=f>환경 <input value="'+E(p.env||'지정 안 함')+'" size=16 disabled></label>'
+    : '<label class=f>기종 <select id=pf_robot>'+robots+'</select></label>'
+      +'<label class=f>구성 <select id=pf_mode><option value=single>한팔</option><option value=bimanual>양팔</option></select></label>';
   f.innerHTML='<div class=pform><h3 style="margin:0 0 10px">'+(p?'프로젝트 편집':'새 프로젝트')+'</h3><div class=formgrid>'
     +'<label class=f>이름 <input id=pf_name size=20 placeholder="dice_cleanup"></label>'
     +'<label class=f style="flex:1;min-width:300px">기본 태스크 설명 (수집·추론에 쓰임) <input id=pf_task placeholder="Move the dice into the cup"></label>'
-    +'<label class=f>기준 환경 <select id=pf_env>'+envOpts+'</select></label></div>'
-    +'<div class=toolbar style="margin-top:12px"><button class=primary id=pf_ok>'+(p?'저장':'만들고 열기')+'</button><button id=pf_no>취소</button></div></div>';
+    +envPart+'</div>'
+    +(p?'':'<p class=muted style="margin:10px 0 0">같은 이름의 빈 환경을 만들고 엽니다 — 포트·카메라는 비어 있고 캘리브 id 는 <span class=mono>이름_follower</span> 처럼 프로젝트 전용이라, 셋업 마법사에서 처음부터 연결·캘리브레이션합니다.</p>')
+    +'<div class=toolbar style="margin-top:12px"><button class=primary id=pf_ok>'+(p?'저장':'만들고 셋업 시작')+'</button><button id=pf_no>취소</button></div></div>';
   $('pf_name').value=p?p.name:''; $('pf_task').value=p?p.task:'';
+  if(!p && $('pf_robot') && V.robot_now) $('pf_robot').value=V.robot_now;
   $('pf_no').onclick=()=>{ f.innerHTML=''; };
   $('pf_ok').onclick=async()=>{
     const name=$('pf_name').value.trim();
     if(!NAME_RE.test(name)){ alert('이름은 영문/숫자/._- 만'); return; }
-    const r=await jpost('/api/projects/save',{name:name,old:p?p.name:'',task:$('pf_task').value,env:$('pf_env').value,activate:!p});
+    const body={name:name,old:p?p.name:'',task:$('pf_task').value,activate:!p};
+    if(!p){ body.robot=$('pf_robot').value; body.mode=$('pf_mode').value; }
+    $('pf_ok').disabled=true;
+    let r; try{ r=await jpost('/api/projects/save',body); }finally{ $('pf_ok').disabled=false; }
     if(r.error){ alert(r.error); return; }
+    if(!p){ location.href='/setup/wizard'; return; }
     f.innerHTML=''; paint(r);
   };
   $('pf_name').focus(); window.scrollTo(0,0);
@@ -7051,8 +7161,12 @@ async function open_(name){
   location.href='/';
 }
 async function del(p){
-  if(!confirm('프로젝트 "'+p.name+'" 를 지웁니다. 데이터셋과 모델 파일은 그대로 남고 미분류가 됩니다.')) return;
-  paint(await jpost('/api/projects/delete',{name:p.name}));
+  const ownEnv=p.env===p.name && !p.env_missing;
+  if(!confirm('프로젝트 "'+p.name+'" 를 지웁니다.'+(ownEnv?' 이 프로젝트의 환경 "'+p.env+'" 도 지웁니다.':'')
+    +'\\n데이터셋·모델·캘리브레이션 파일은 그대로 남고, 데이터셋·모델은 미분류가 됩니다.')) return;
+  const r=await jpost('/api/projects/delete',{name:p.name});
+  if(r.note) alert(r.note);
+  paint(r);
 }
 jget('/api/projects').then(paint);
 </script>"""
@@ -8450,7 +8564,7 @@ function envPaint(d){
     const td=$('envact'+i);
     if(!e.active) td.appendChild(btn('전환',()=>envActivate(e.name),'primary'));
     td.appendChild(btn('이름 변경',()=>envRename(e.name)));
-    if(!e.active) td.appendChild(btn('삭제',()=>envDelete(e.name),'danger'));
+    td.appendChild(btn('삭제',()=>envDelete(e.name,e.active),'danger'));
   });
 }
 const ENV_RE=/^[A-Za-z0-9._-]+$/;
@@ -8476,10 +8590,12 @@ async function envRename(name){
   if(r.error){ alert(r.error); return; }
   location.reload();
 }
-async function envDelete(name){
-  if(!confirm('환경 "'+name+'" 를 지웁니다. 데이터셋과 캘리브레이션 파일은 그대로입니다.')) return;
+async function envDelete(name,active){
+  if(!confirm('환경 "'+name+'" 를 지웁니다. 데이터셋과 캘리브레이션 파일은 그대로입니다.'
+    +(active?'\\n\\n사용 중인 환경이라 default(없으면 다른 환경)로 먼저 전환합니다.':''))) return;
   const r=await jpost('/api/envs/delete',{name:name});
   if(r.error){ alert(r.error); return; }
+  if(active){ location.reload(); return; }
   envPaint(r);
 }
 

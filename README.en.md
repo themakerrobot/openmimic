@@ -219,8 +219,11 @@ Choose a checkpoint and run autonomously. Before starting, cameras and joint cou
 
 ### More — Projects · Hub · Jobs
 
-- **Projects** — groups one task (task description, reference environment, datasets, models). When open, other screens show that project,
-  and new datasets and models are added to it automatically. Everything else works without one.
+- **Projects** — groups one task (task description, its own environment, datasets, models). A new project creates an empty environment with the same name
+  (only robot model and single/bimanual are set; ports and cameras are empty; calibration ids are project-specific such as `<project>_follower`)
+  and takes you to the setup wizard to connect from scratch. Opening a project switches to its environment, other screens show that project,
+  and new datasets and models are added to it automatically. Deleting a project deletes its environment too (datasets, models and calibration files are kept).
+  Everything else works without one.
 - **Hub** — exchange with the Hugging Face Hub: login (token), upload datasets, download datasets and models, check and cancel **HF Jobs cloud training**.
 - **Jobs** — background jobs such as collection, training and rollout, with logs. They can be stopped here.
 

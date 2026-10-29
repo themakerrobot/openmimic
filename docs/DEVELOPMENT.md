@@ -58,7 +58,7 @@
 |---|---|
 | `openmimic_config.json` | 사용 중인 환경의 설정 |
 | `openmimic_envs/<이름>.json` | 이름 붙은 환경들 — 전환하면 `openmimic_config.json` 으로 복사 |
-| `openmimic_projects.json` | 프로젝트 (태스크·기준 환경·데이터셋·모델) |
+| `openmimic_projects.json` | 프로젝트 (태스크·환경·데이터셋·모델). 프로젝트 하나 = 같은 이름의 환경 하나 — 만들 때 빈 환경(`blank_env_config`, 캘리브 id `<이름>_follower`)을 만들고, 열면 그 환경으로 전환(없어졌으면 다시 만듦), 이름을 바꾸면 환경 이름도 바꾸고, 지우면 그 환경도 지움. 사용 중인 환경을 지우면 default(없으면 다른 환경)로 먼저 전환 |
 | `openmimic_dsmeta.json` | 데이터셋별 수집 환경·생성 시각 |
 | `openmimic_wizard.json` | 마법사의 팔별 '확인 완료' 기록 (환경별) |
 | `openmimic_jobs/` | 백그라운드 작업 기록·로그 |
