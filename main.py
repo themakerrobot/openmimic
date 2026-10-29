@@ -7013,19 +7013,28 @@ def convert_mode(cfg, mode):
     a = cfg["arms"][0]
     old = {r: a[f"{r}_id"] for r in ("follower", "leader")}
     if mode == "bimanual":
+        # 양팔 id 는 'X_left' / 'X_right' 짝이어야 하므로(bimanual_base_id), 지금 id 를 X 로 삼아 둘 다 만듭니다
+        # (follower → follower_left / follower_right, sim_follower → sim_follower_left / sim_follower_right)
         a["side"] = "left"
+        right = {}
         for r in ("follower", "leader"):
-            if a[f"{r}_id"] == r:
-                a[f"{r}_id"] = f"{r}_left"
+            base = (a.get(f"{r}_id") or r).strip() or r
+            if base.endswith("_left"):
+                base = base[:-5] or r
+            elif base.endswith("_right"):
+                base = base[:-6] or r
+            a[f"{r}_id"] = f"{base}_left"
+            right[f"{r}_id"] = f"{base}_right"
         a["view"] = {"x": 0.0, "y": 0.12, "yaw_deg": 0.0}
-        cfg["arms"] = [a, {"side": "right", "follower_port": "", "follower_id": "follower_right",
-                           "leader_port": "", "leader_id": "leader_right", "cameras": {},
+        cfg["arms"] = [a, {"side": "right", "follower_port": "", "follower_id": right["follower_id"],
+                           "leader_port": "", "leader_id": right["leader_id"], "cameras": {},
                            "view": {"x": 0.0, "y": -0.12, "yaw_deg": 0.0}}]
     else:
         a["side"] = "main"
         for r in ("follower", "leader"):
-            if a[f"{r}_id"] == f"{r}_left":
-                a[f"{r}_id"] = r
+            i = a.get(f"{r}_id") or r
+            if i.endswith("_left") and i[:-5]:
+                a[f"{r}_id"] = i[:-5]
         a["view"] = {"x": 0.0, "y": 0.0, "yaw_deg": 0.0}
         cfg["arms"] = [a]
     cfg["mode"] = mode

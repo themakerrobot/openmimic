@@ -198,7 +198,8 @@ Windows 에서 따로 챙긴 것:
   EEPROM 만 읽어 파일을 다시 만듭니다 (`read_calibration` 과 같은 값). 공장값이거나 일부만 캘리브레이션돼 있으면 거부.
 - **확인 단계 보정**: EEPROM 의 `Homing_Offset` 이 파일과 다르면, 연결 때 lerobot 이 파일 값을 써 넣은 뒤의 값으로 보여 줍니다
   (Feetech `+ (EEPROM − 파일)`, Dynamixel `+ (파일 − EEPROM)`).
-- **한팔 ↔ 양팔 전환**: 한팔의 팔이 `left` 가 되고 id 가 `follower` → `follower_left`. 같은 팔이 쓰던 캘리브레이션 파일을
+- **한팔 ↔ 양팔 전환**: 한팔의 팔이 `left` 가 되고 지금 id 에 `_left` 를, 오른팔은 같은 이름에 `_right` 를 붙입니다
+  (`follower` → `follower_left` / `follower_right`, `sim_follower` → `sim_follower_left` / `sim_follower_right`). 양팔 → 한팔은 `_left` 를 뗍니다. 같은 팔이 쓰던 캘리브레이션 파일을
   새 id 로 복사하고 '확인됨' 기록도 옮깁니다 (대상에 다른 파일이 있으면 `.json.bak`).
 - **기종 전환**: 보드가 다르니 포트를 비웁니다. 캘리브레이션 파일은 기종별 폴더라 섞이지 않습니다.
 
