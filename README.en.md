@@ -123,7 +123,6 @@ the start button on that screen is disabled and a **large button shows where to 
 ### Setup
 
 **Start setup wizard** at the top is the way to connect arms the first time; this screen is for registering cameras and environments and for detailed settings.
-If no arms are connected, a **try with virtual devices** card appears below it ([Trying it without arms](#trying-it-without-arms--virtual-devices)).
 
 | Section | What it does |
 |---|---|
@@ -248,38 +247,6 @@ On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT
 3. **Rollout → inference engine: OpenVINO · NPU**
 
 Details and measurements: **[docs/INTEL.md](docs/INTEL.md)** (Korean)
-
-## Trying it without arms — virtual devices
-
-You can go from setup to rollout without any arms or cameras — useful for preparing a class or a demo.
-
-1. **Turn on virtual devices** at the top of **Setup** (or the setup wizard) — choose the arm type (SO-ARM101 / OMX) and single/bimanual
-2. Virtual arms (leader and follower) and virtual cameras are created, and the environment switches to `sim-<type>-<mode>`.
-   Your real arm settings are kept, and calibration files are stored separately so they never mix
-3. In the **virtual devices** bar at the bottom, use **Move follower / Move leader** instead of your hand (find port, calibration, verify),
-   and **Leader auto-motion** for Control and Collect
-4. **Simulate faults** triggers overheating or a voltage drop so you can see how servo health monitoring stops things
-5. When done, **Turn off virtual devices** — you return to the previous environment
-
-![Virtual devices](docs/img/sim.png)
-
-### Physics simulation — collect, train and run without arms
-
-For an SO-ARM101 single arm you can turn on virtual devices with **physics simulation (MuJoCo)** (on by default).
-The follower becomes an SO-101 inside the simulation, and the cameras (top · wrist) show a table, a red cube and a green square.
-The task is **pick up the cube and place it in the green square**.
-
-1. Calibrate in the setup wizard (**Move** buttons in the bar)
-2. **Collect** — turn on **Record automatically with virtual demos** and start: for each episode the cube is placed anew,
-   the leader demonstrates (about 14 s), and recording continues by itself up to the target number of episodes
-3. **Training** — train ACT etc. on the collected dataset (same screen as with real arms)
-4. **Rollout** — the cube is placed anew at the start; once it is in the green square the attempt is **recorded as a success automatically**
-   and the run ends. A run that ends without success is recorded as a failure — the success rate builds up in the Models tab
-
-![Physics simulation](docs/img/sim_mujoco.png)
-
-- Models trained in simulation are for teaching and practicing the workflow; they are not meant for real arms as is
-- Camera images are rendered on the GPU (EGL). Without a GPU they are rendered on the CPU, which is slower
 
 ## Servo health monitoring · power check
 

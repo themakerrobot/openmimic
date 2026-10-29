@@ -254,8 +254,6 @@ if ((Pip @('install', 'fastapi<1.0', 'uvicorn', 'websockets>=12', 'psutil')) -ne
 if ((Pip @('install', 'pygrabber')) -ne 0) {
     Warn "pygrabber 설치 실패 — 카메라를 번호로만 지정합니다 (재부팅·재연결 때 순서가 바뀔 수 있음)"
 }
-# mujoco: 가상 장치의 물리 시뮬레이션. 실패해도 OpenMimic 은 동작합니다 (단순 가상 장치만)
-if ((Pip @('install', 'mujoco>=3.2')) -ne 0) { Warn "mujoco 설치 실패 — 가상 장치는 물리 시뮬레이션 없이 동작합니다" }
 
 Log "4-3. 플러그인 — 양팔 OMX (bi_omx_follower / bi_omx_leader) · ACT2 정책 (act2)"
 $plugins = @('lerobot_robot_bi_omx', 'lerobot_teleoperator_bi_omx', 'lerobot_policy_act2') |

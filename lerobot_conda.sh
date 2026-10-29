@@ -120,9 +120,6 @@ apt_one() {   # apt_one 이름 [대체이름…] — 앞에서부터 처음 설�
 }
 for p in git curl build-essential pkg-config libgl1 v4l-utils; do apt_one "${p}"; done
 apt_one libglib2.0-0t64 libglib2.0-0
-#   libegl1·libosmesa6 : 가상 장치 물리 시뮬레이션(MuJoCo) 카메라 렌더 — GPU 는 EGL, GPU 가 없으면 OSMesa(CPU)
-apt_one libegl1
-apt_one libosmesa6
 
 # 시리얼(모터 보드)·카메라 권한. udev 심볼릭 링크는 만들지 않습니다 — 포트는 웹 Setup 탭에서 지정합니다.
 sudo usermod -aG dialout,video "${USER}" || true
@@ -258,8 +255,6 @@ pip install "av>=15.0.0,<16.0.0"
 log "4-2. OpenMimic 의존성"
 # websockets: Control 탭(/ws/control)이 WebSocket 을 씁니다. uvicorn 만 깔면 WebSocket 이 404 로 거부됩니다
 pip install "fastapi<1.0" uvicorn "websockets>=12"
-# mujoco: 가상 장치의 물리 시뮬레이션(팔 없이 큐브 집기 과제). 실패해도 OpenMimic 은 동작합니다 (단순 가상 장치만)
-PIP_CONSTRAINT=/tmp/torch-constraint.txt pip install "mujoco>=3.2" || warn "mujoco 설치 실패 — 가상 장치는 물리 시뮬레이션 없이 동작합니다"
 
 log "4-3. 플러그인 — 양팔 OMX (bi_omx_follower / bi_omx_leader) · ACT2 정책 (act2)"
 # lerobot 에 없는 것들을 이 레포의 plugins/ 에서 설치합니다. 설치된 패키지 이름이

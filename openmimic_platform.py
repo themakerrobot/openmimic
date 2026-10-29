@@ -1,16 +1,13 @@
 """OpenMimic 플랫폼 분기 — Linux(Ubuntu) 와 Windows 의 차이는 이 파일에만 둡니다.
 
 다른 파일은 os.name / sys.platform 을 직접 보지 않고 여기 함수를 부릅니다.
-Linux 쪽은 원래 main.py · openmimic_mujoco.py · openmimic_simcam.py 에 있던 코드를 그대로 옮긴 것입니다.
+Linux 쪽은 원래 main.py 에 있던 코드를 그대로 옮긴 것입니다.
 
     시리얼 포트   list_serial_ports · resolve_serial_port · port_key · port_exists · serial_port_ok
     카메라        list_cameras · resolve_camera · camera_path_ok
     작업 프로세스 spawn_job · stop_job · job_alive · proc_start_time · install_stop_handlers · interrupt_self
-    공유 폴더     shm_dir · frame_dir
-    MuJoCo 렌더   setup_mujoco_gl
+    공유 폴더     shm_dir
     안내 문구     serial_group_hint · serial_port_hint · camera_path_hint
-
-가상 팔 포트(sim://<이름>)는 OS 와 무관하게 openmimic_fakeserial 이 처리합니다 — 여기서는 이름 그대로 통과시킵니다.
 """
 from __future__ import annotations
 
@@ -21,13 +18,10 @@ import re
 import signal
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 
 IS_WIN = os.name == "nt"
 HERE = Path(__file__).resolve().parent
-SIM_DIR = HERE / "openmimic_sim"          # tools_simarms 가 가상 카메라 경로 파일·명령 파일을 두는 곳
-SIM_PREFIX = "sim://"                     # 가상 팔 포트 이름 (openmimic_fakeserial)
 DSHOW_PREFIX = "dshow:"                   # Windows 카메라 안정 식별자 (DirectShow 장치 경로)
 
 
@@ -37,10 +31,6 @@ class PortNotFound(OSError):
 
 class CameraNotFound(OSError):
     """설정에 저장된 카메라 식별자를 지금 연결된 장치에서 찾지 못함."""
-
-
-def is_sim_port(spec) -> bool:
-    return isinstance(spec, str) and spec.startswith(SIM_PREFIX)
 
 
 # ============================================================================ 기기 플랫폼
@@ -72,13 +62,6 @@ def shm_dir(name: str, fallback: Path) -> Path:
     if not IS_WIN and Path("/dev/shm").is_dir():
         return Path("/dev/shm") / name
     return fallback
-
-
-def frame_dir() -> Path:
-    """물리 시뮬레이션 카메라 프레임(cam_<이름>.rgb)을 주고받는 폴더 — 쓰는 쪽·읽는 쪽이 같은 값을 써야 합니다."""
-    if IS_WIN:
-        return Path(tempfile.gettempdir()) / "openmimic_sim"
-    return shm_dir("openmimic_sim", SIM_DIR)
 
 
 def replace_file(src, dst, wait: float = 2.0) -> None:
@@ -308,36 +291,6 @@ def job_alive(pid) -> bool:
     return True
 
 
-def pid_exists(pid) -> bool:
-    """pid 프로세스가 있는지만 (자식 회수·좀비 판정 없이). Linux 는 원래 쓰던 os.kill(pid, 0)."""
-    try:
-        pid = int(pid)
-    except (TypeError, ValueError):
-        return False
-    if pid <= 0:
-        return False
-    if IS_WIN:
-        try:
-            import psutil
-            return psutil.pid_exists(pid)
-        except ImportError:
-            return _win_pid_alive(pid)
-    try:
-        os.kill(pid, 0)
-    except OSError:
-        return False
-    return True
-
-
-def terminate(pid) -> None:
-    """프로세스 하나에 정리 후 종료 요청 — Linux SIGTERM, Windows CTRL_BREAK(그 프로세스 그룹).
-    작업 기록 없이 pid 만 남은 가상 장치를 끌 때 씁니다. 실패하면 OSError."""
-    if IS_WIN:
-        _win_break(int(pid))
-        return
-    os.kill(int(pid), signal.SIGTERM)
-
-
 def _win_pid_alive(pid):
     import ctypes
     k32 = ctypes.windll.kernel32
@@ -480,7 +433,7 @@ def _win_port_entry(p):
 def list_serial_ports() -> list[dict]:
     """USB 시리얼 장치 목록 — [{"dev", "by_id", "by_path", "usb": {vid, pid, manufacturer, product, serial}}].
     dev 는 지금 열 수 있는 경로(/dev/ttyACM0 · COM5), by_id 는 보드 시리얼 번호 기반(번호가 있을 때),
-    by_path 는 물리 USB 포트 기반 식별자. 가상 팔은 포함하지 않습니다 (main.py 가 붙임)."""
+    by_path 는 물리 USB 포트 기반 식별자."""
     if IS_WIN:
         out = []
         for p in sorted(_win_comports(), key=lambda x: (len(x.device), x.device)):      # COM3 이 COM10 보다 앞에
@@ -505,10 +458,9 @@ _COM_RE = re.compile(r"^(\\\\\.\\)?COM\d+$", re.I)
 def resolve_serial_port(spec: str) -> str:
     """설정에 저장된 포트 문자열 → 지금 열 수 있는 포트.
     Linux: 그대로 (by-id·by-path 심볼릭 링크를 pyserial 이 따라갑니다 — 원래 동작).
-    Windows: usb-<vid>_<pid>_<sn> 또는 USB 위치 → 지금 그 장치의 COM 이름. 못 찾으면 PortNotFound.
-    가상 팔(sim://…)은 그대로."""
+    Windows: usb-<vid>_<pid>_<sn> 또는 USB 위치 → 지금 그 장치의 COM 이름. 못 찾으면 PortNotFound."""
     spec = (spec or "").strip()
-    if not IS_WIN or not spec or is_sim_port(spec):
+    if not IS_WIN or not spec:
         return spec
     ports = list_serial_ports()
     for e in ports:
@@ -525,10 +477,10 @@ def resolve_serial_port(spec: str) -> str:
 
 
 def port_key(spec: str) -> str:
-    """같은 장치인지 비교할 때 쓰는 값 — Linux: realpath(/dev/ttyACM0), Windows: COM 이름, 가상 팔: 이름 그대로.
+    """같은 장치인지 비교할 때 쓰는 값 — Linux: realpath(/dev/ttyACM0), Windows: COM 이름.
     지금 연결돼 있지 않으면 문자열 그대로."""
     spec = (spec or "").strip()
-    if not spec or is_sim_port(spec):
+    if not spec:
         return spec
     if IS_WIN:
         try:
@@ -539,7 +491,7 @@ def port_key(spec: str) -> str:
 
 
 def port_exists(spec: str) -> bool:
-    """실제 포트가 지금 있는지. 가상 팔 포트는 openmimic_fakeserial.sim_port_alive 로 따로 봅니다."""
+    """실제 포트가 지금 있는지."""
     spec = (spec or "").strip()
     if not spec:
         return False
@@ -554,11 +506,9 @@ def port_exists(spec: str) -> bool:
 
 def serial_port_ok(spec) -> bool:
     """설정에 넣을 수 있는 포트 문자열인지 (모양만 — 지금 연결돼 있는지는 보지 않음).
-    Linux: /dev/… · Windows: COM5 · usb-<vid>_<pid>_<sn> · USB 위치(1-3.2) · 공통: sim://<이름>."""
+    Linux: /dev/… · Windows: COM5 · usb-<vid>_<pid>_<sn> · USB 위치(1-3.2)."""
     if not isinstance(spec, str) or not spec or len(spec) > 512:
         return False
-    if is_sim_port(spec):
-        return re.fullmatch(r"sim://[A-Za-z0-9_.-]+", spec) is not None
     if IS_WIN:
         return bool(_COM_RE.match(spec) or re.fullmatch(r"usb-[0-9a-f]{4}_[0-9a-f]{4}_\w+", spec)
                     or re.fullmatch(r"[0-9]+-[0-9.]+(:x\.\d+)?", spec))
@@ -573,7 +523,7 @@ def serial_port_hint() -> str:
 # 화면·오류 안내 문구 중 OS 에 따라 다른 것. Linux 값은 원래 main.py 문구 그대로입니다.
 if IS_WIN:
     TEXT = {
-        "port_hint": "포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치, 가상 팔은 sim://…)여야 합니다",
+        "port_hint": "포트는 COM 포트 또는 USB 식별자(usb-… · USB 위치)여야 합니다",
         "port_open_fail": "다른 프로그램이 잡고 있거나 COM 포트 드라이버 문제 (장치 관리자 확인)",
         "perm_regex": r"PermissionError.*COM\d+|Access is denied|액세스가 거부",
         "perm_hint": "포트를 열 권한이 없습니다 — 다른 프로그램(시리얼 모니터 등)이 COM 포트를 잡고 있는지 확인하세요.",
@@ -595,7 +545,7 @@ if IS_WIN:
     }
 else:
     TEXT = {
-        "port_hint": "포트는 /dev/… (또는 가상 팔 sim://…) 경로여야 합니다",
+        "port_hint": "포트는 /dev/… 경로여야 합니다",
         "port_open_fail": "다른 프로그램이 잡고 있거나 dialout 권한 문제",
         "perm_regex": r"Permission denied.*tty|PermissionError.*tty",
         "perm_hint": "포트 권한이 없습니다 — dialout 그룹에 추가 후 다시 로그인하세요.",
@@ -771,7 +721,7 @@ def _win_cameras():
 
 
 def list_cameras() -> list[dict]:
-    """카메라 후보 — [{"dev", "by_id", "by_path", "usb", "width", "height", "fps", "name"}]. 가상 카메라는 main.py 가 붙임.
+    """카메라 후보 — [{"dev", "by_id", "by_path", "usb", "width", "height", "fps", "name"}].
     Linux: lerobot OpenCVCamera.find_cameras() 를 쓰되, 실패하면 /dev/video* 나열로 폴백합니다.
     같은 모델 카메라 2개(wrist ×2)는 USB 시리얼 번호가 없으면 /dev/v4l/by-id 이름이 겹쳐
     어느 링크가 어느 카메라인지 부팅마다 바뀔 수 있습니다. 시리얼 포트와 같은 규칙으로
@@ -803,7 +753,7 @@ def list_cameras() -> list[dict]:
 def resolve_camera(index_or_path):
     """설정의 index_or_path → (OpenCV 에 넘길 값, backend 또는 None).
     Linux: 그대로 (backend 지정 안 함 — 원래 동작). Windows: dshow:<장치 경로> → 지금 인덱스 + CAP_DSHOW,
-    숫자 인덱스 → 그 인덱스 + CAP_DSHOW. 가상 카메라 경로(openmimic_sim/cam_*)는 그대로."""
+    숫자 인덱스 → 그 인덱스 + CAP_DSHOW."""
     if not IS_WIN:
         return index_or_path, None
     import cv2
@@ -828,7 +778,7 @@ def camera_key(dev) -> str:
 
 
 def camera_path_ok(idx: str) -> bool:
-    """문자열 카메라 경로의 모양 — Linux: /dev/…, Windows: dshow:<장치 경로>. (가상 카메라는 main.py 가 따로 봄)"""
+    """문자열 카메라 경로의 모양 — Linux: /dev/…, Windows: dshow:<장치 경로>."""
     if IS_WIN:
         # 안정 식별자가 없는 카메라(pygrabber·ffmpeg 없음, 장치 경로 없는 소프트웨어 카메라)는 번호 문자열로 옵니다
         return (idx.startswith(DSHOW_PREFIX) and len(idx) > len(DSHOW_PREFIX)) or idx.isdigit()
@@ -837,52 +787,3 @@ def camera_path_ok(idx: str) -> bool:
 
 def camera_path_hint() -> str:
     return TEXT["cam_path_hint"]
-
-
-# ============================================================================ MuJoCo 렌더 백엔드
-_GL_PROBE = ("import mujoco\n"
-             "m = mujoco.MjModel.from_xml_string('<mujoco><worldbody><geom size=\\'.1\\'/></worldbody></mujoco>')\n"
-             "r = mujoco.Renderer(m, 32, 32); r.update_scene(mujoco.MjData(m)); r.render()\n"
-             "from OpenGL import GL\n"
-             "print((GL.glGetString(GL.GL_RENDERER) or b'').decode(errors='ignore'))\n")
-
-
-def _gl_probe(gl):
-    try:
-        r = subprocess.run([sys.executable, "-c", _GL_PROBE], env=dict(os.environ, MUJOCO_GL=gl),
-                           capture_output=True, text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired):
-        return None
-    return r.stdout.strip().lower() if r.returncode == 0 else None
-
-
-def setup_mujoco_gl() -> bool:
-    """MuJoCo 렌더 백엔드를 MUJOCO_GL 에 정합니다. 렌더를 쓸 수 있으면 True.
-    MuJoCo 는 import 할 때 백엔드를 정하므로 별도 프로세스로 시험합니다. 이미 지정돼 있으면(MUJOCO_GL) 그대로.
-    Linux: GPU 가속 EGL(Intel 내장 GPU 등) 이 되면 EGL, 아니면 OSMesa(CPU).
-           EGL 이 소프트웨어(llvmpipe)로만 돌면 OSMesa 보다 느려서 OSMesa 를 고릅니다.
-    Windows: wgl(GLFW 숨은 창) 하나만 시험 — 안 되면 False (물리 시뮬레이션 없이 가상 장치를 켭니다)."""
-    if os.environ.get("MUJOCO_GL"):
-        return True
-    if IS_WIN:
-        # TODO(win-verify): 원격 데스크톱·서비스 세션처럼 데스크톱이 없을 때 wgl 숨은 창이 만들어지는지
-        info = _gl_probe("wgl")
-        if info is None:
-            return False
-        os.environ["MUJOCO_GL"] = "wgl"
-        os.environ["OPENMIMIC_GL_INFO"] = info
-        return True
-    found = {}
-    for gl in ("egl", "osmesa"):
-        info = _gl_probe(gl)
-        if info is not None:
-            found[gl] = info
-    soft = ("llvmpipe", "softpipe", "swrast")
-    if "egl" in found and not any(x in found["egl"] for x in soft):
-        os.environ["MUJOCO_GL"] = "egl"
-    elif "osmesa" in found:
-        os.environ["MUJOCO_GL"] = "osmesa"
-    else:
-        os.environ["MUJOCO_GL"] = "egl"
-    os.environ["OPENMIMIC_GL_INFO"] = found.get(os.environ["MUJOCO_GL"], "")
-    return True

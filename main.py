@@ -44,14 +44,9 @@ from fastapi.responses import (
     StreamingResponse,
 )
 
-import openmimic_fakeserial  # 가상 팔 포트(sim://…) — 실제 포트는 그대로 pyserial
 import openmimic_health  # 시작 전 전원 점검 · 실행 중 서보 온도/전압 감시
 import openmimic_ov  # OpenVINO 변환·롤아웃. openvino 자체는 필요할 때 별도 프로세스에서만 import 합니다
 import openmimic_platform as P  # Linux/Windows 차이 (포트·카메라·작업 프로세스·공유 폴더)
-import openmimic_simcam  # 가상 카메라 (openmimic_sim/cam_<이름>) — 실제 카메라 경로는 그대로
-
-openmimic_simcam.install()
-openmimic_fakeserial.install()
 
 # ------------------------------- 경로 ---------------------------------------
 HOME = Path.home()
@@ -334,8 +329,7 @@ _START_PATHS = {"/api/record", "/api/rollout", "/api/train", "/api/setup/probe",
                 "/api/wizard/verify/start", "/api/wizard/import_calib", "/api/wizard/mode",
                 "/api/setup/config", "/api/calib/start", "/api/calib/factory", "/api/wizard/robot",
                 "/api/envs/activate", "/api/envs/save_as", "/api/ov/convert",
-                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull",
-                "/api/sim/start", "/api/sim/stop"}
+                "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull"}
 _START_PREFIXES = ("/api/install/", "/api/dataset/repair/")
 _START_GATE = asyncio.Lock()
 
@@ -411,7 +405,6 @@ NAV_EN = {"셋업": "Setup", "캘리브레이션": "Calibration", "제어": "Con
           "학습": "Training", "모델": "Models", "실행": "Rollout", "프로젝트": "Projects", "허브": "Hub", "작업": "Jobs",
           "더보기": "More", "대기": "Idle", "클라우드 학습": "Cloud training", "포트 감시": "Port watch", "설치": "Install",
           "OpenVINO 변환": "OpenVINO convert", "복구": "Repair", "삭제": "Delete",
-          "가상 장치": "Virtual devices",
           # 표 머리·입력칸 이름표·작은 제목 — 한 낱말짜리라 자리를 정해 바꿉니다
           "로봇": "Robot", "크기": "Size", "상태": "Status", "시작": "Started", "종류": "Kind", "폭": "Span",
           "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration"}
@@ -653,6 +646,34 @@ def delete_env(name):
     if not f.exists():
         raise ValueError(f"환경 없음: {name}")
     f.unlink()
+
+
+def leave_old_sim_env():
+    """예전 판의 가상 장치 환경(포트 sim://…)이 사용 중이면 그 전에 쓰던 환경으로 돌아갑니다.
+    돌아갈 환경이 없으면 포트를 비운 기본 환경으로 둡니다 (가상 장치 기능은 없어졌습니다)."""
+    if not any(str(a.get(f"{r}_port") or "").startswith("sim://") for a in ARM_CFGS.values()
+               for r in ("follower", "leader")):
+        return
+    for name in (CFG.get("sim_prev_env"), DEFAULT_ENV):
+        if name and safe_name(name) and name != env_name() and _env_file(name).exists():
+            try:
+                activate_env(name)
+                print(f"[openmimic] 예전 가상 장치 환경에서 '{name}' 환경으로 돌아왔습니다")
+                return
+            except ValueError:
+                pass
+    cfg = json.loads(json.dumps(CFG))
+    cfg.pop("sim_prev_env", None)
+    cfg["env_name"] = DEFAULT_ENV if not _env_file(DEFAULT_ENV).exists() else f"{DEFAULT_ENV}-{time.strftime('%Y%m%d')}"
+    bi = cfg.get("mode") == "bimanual"
+    for a in cfg["arms"]:
+        sfx = f"_{a['side']}" if bi else ""
+        a.update({"follower_port": "", "leader_port": "", "follower_id": f"follower{sfx}",
+                  "leader_id": f"leader{sfx}", "cameras": {}})
+    cfg["cameras"] = {}
+    _write_active_config(cfg)
+    sync_active_env()
+    print(f"[openmimic] 예전 가상 장치 환경을 비우고 '{env_name()}' 환경으로 바꿨습니다 — 셋업에서 팔을 다시 연결하세요")
 
 
 # 데이터셋 메타 — lerobot 파일은 건드리지 않고 OpenMimic 쪽에만 둡니다 {데이터셋: {env, created}}
@@ -1880,250 +1901,14 @@ def ports_held():
 
 
 # ----------------------------- 포트 / 카메라 탐색 (셋업 탭) -------------------
-SIM_FILE = Path(__file__).resolve().parent / "openmimic_sim.json"     # tools_simarms.py 가 켜져 있을 때만 있음
-SIM_DIR = Path(__file__).resolve().parent / "openmimic_sim"
-
-
 def serial_path_ok(p):
-    """포트 문자열 검사 — 플랫폼별 실제 포트 모양 또는 가상 팔(tools_simarms) 의 sim://<이름>."""
+    """포트 문자열 검사 — 플랫폼별 실제 포트 모양."""
     return isinstance(p, str) and P.serial_port_ok(p)
 
 
 def port_present(port):
-    """지정한 포트가 지금 연결돼 있는지 (Windows 는 by-id·USB 위치로 COM 을 찾을 수 있는지, 가상 팔은 켜져 있는지)."""
-    if P.is_sim_port(port):
-        return openmimic_fakeserial.sim_port_alive(port)
+    """지정한 포트가 지금 연결돼 있는지 (Windows 는 by-id·USB 위치로 COM 을 찾을 수 있는지)."""
     return P.port_exists(port)
-
-
-def _sim_ports():
-    """가상 팔 도구가 켜져 있으면 그 보드들 (sim://<이름>). 꺼져 있거나 죽었으면 빈 목록."""
-    return [p for p in openmimic_fakeserial.sim_info().get("ports", []) if P.is_sim_port(p.get("path"))]
-
-
-# ----------------------------- 가상 장치 (팔·카메라 없이 해 보기) -------------------
-# 셋업 화면의 '가상 장치 켜기' 가 tools_simarms.py 를 작업으로 띄우고, 가상 팔·카메라만 쓰는 환경
-# 'sim-<기종>-<모드>' 로 바꿉니다. 캘리브 id 는 sim_* 라서 실제 팔의 캘리브레이션 파일과 섞이지 않고,
-# 끄면 켜기 전 환경으로 돌아갑니다. 화면 아래 '가상 장치' 막대가 손 대신 관절을 움직입니다 (openmimic_sim/cmd).
-SIM_PY = Path(__file__).resolve().parent / "tools_simarms.py"
-SIM_ENV_PREFIX = "sim-"
-SIM_CAM = {"width": 320, "height": 240, "fps": 30}
-
-
-def sim_state():
-    d = load_json(SIM_FILE, {})
-    pid = d.get("pid") if isinstance(d, dict) else None
-    if not pid or not P.pid_exists(pid):
-        return {"on": False}
-    d["on"] = True
-    d["cams"] = [c for c in d.get("cams", []) if isinstance(c, dict) and c.get("path")]
-    return d
-
-
-def sim_physics():
-    """MuJoCo 물리 시뮬레이션 가상 장치가 켜져 있고 지금 환경이 그것이면 상태(dict), 아니면 None."""
-    st = sim_state()
-    if st.get("on") and st.get("physics") == "mujoco" and env_name().startswith(SIM_ENV_PREFIX):
-        return st
-    return None
-
-
-def sim_env_name(robot, mode):
-    return f"{SIM_ENV_PREFIX}{robot}-{mode}"
-
-
-def sim_config(st, prev_env):
-    """가상 장치 상태(st)로 환경 설정을 만듭니다. 전에 쓰던 같은 이름의 가상 환경이 있으면 fps·과제 등은 이어받습니다."""
-    name = sim_env_name(st["robot"], st["mode"])
-    old = load_json(_env_file(name), None)
-    cfg = old if isinstance(old, dict) else json.loads(json.dumps(DEFAULT_CONFIG))
-    cfg.update({"robot": st["robot"], "mode": st["mode"], "env_name": name, "sim_prev_env": prev_env})
-    ports = {p.get("name"): p["path"] for p in st.get("ports", [])}
-    cams = {c["name"]: c["path"] for c in st.get("cams", [])}
-    sides = ["main"] if st["mode"] == "single" else ["left", "right"]
-    arms = []
-    for side in sides:
-        sfx = "" if side == "main" else f"_{side}"
-        wrist = cams.get("wrist" if side == "main" else f"{side}_wrist")
-        arms.append({"side": side, "follower_port": ports.get(f"{side}_follower", ""),
-                     "leader_port": ports.get(f"{side}_leader", ""),
-                     "follower_id": f"sim_follower{sfx}", "leader_id": f"sim_leader{sfx}",
-                     "cameras": {"wrist": dict(SIM_CAM, index_or_path=wrist)} if wrist else {}})
-    cfg["arms"] = arms
-    cfg["cameras"] = {"top": dict(SIM_CAM, index_or_path=cams["top"])} if cams.get("top") else {}
-    return cfg
-
-
-def mujoco_ok():
-    import importlib.util
-    return importlib.util.find_spec("mujoco") is not None
-
-
-def sim_start(robot, mode, physics=True):
-    if robot not in ROBOT_KINDS or mode not in ("single", "bimanual"):
-        raise ValueError("기종·모드 값이 잘못됐습니다")
-    if sim_state().get("on"):
-        raise ValueError("가상 장치가 이미 켜져 있습니다 — 끄고 다시 켜세요")
-    busy = robot_busy()
-    if busy:
-        raise ValueError(f"팔을 쓰는 중입니다 ({busy['id']}) — 끝낸 뒤 켜세요")
-    jid = start_job("sim", [sys.executable, str(SIM_PY), "--robot", robot, "--mode", mode,
-                            "--physics", "auto" if physics else "none",
-                            "--cam", f"{SIM_CAM['width']}x{SIM_CAM['height']}"],
-                    cwd=str(SIM_PY.parent), spec={"robot": robot, "mode": mode})
-    pid = load_json(JOB_DIR / f"{jid}.json", {}).get("pid")
-    st = {}
-    for _ in range(150):                   # 가상 보드(sim:// 소켓)와 상태 파일이 생길 때까지 (물리 시뮬레이션이면 몇 초)
-        st = sim_state()
-        if st.get("on") and st.get("pid") == pid and st.get("ports"):
-            break
-        time.sleep(0.1)
-    else:
-        kill_job(jid, force=True)
-        raise RuntimeError(f"가상 장치를 켜지 못했습니다 — 작업 로그 확인: {jid}")
-    prev = env_name()
-    if not prev.startswith(SIM_ENV_PREFIX):
-        sync_active_env()                  # 실제 팔 설정을 그 환경 파일에 보관
-    else:
-        prev = (CFG or {}).get("sim_prev_env") or DEFAULT_ENV
-    cfg = sim_config(st, prev)
-    err = validate_config(cfg)
-    if err:
-        kill_job(jid, force=True)
-        raise RuntimeError(f"가상 환경 설정 오류: {err}")
-    ENV_DIR.mkdir(parents=True, exist_ok=True)
-    save_json(_env_file(cfg["env_name"]), cfg)
-    _write_active_config(cfg)
-    return {"ok": True, "job": jid, "env": cfg["env_name"], "prev": prev}
-
-
-def sim_stop():
-    st = sim_state()
-    busy = robot_busy()       # 수집·실행 + 제어 탭·캘리브레이션·포트 감시·점검·확인 — 쓰는 중에 가상 팔이 사라지지 않게
-    if busy:
-        raise ValueError(f"{busy['id']} 가 가상 팔을 쓰는 중입니다 — 끝낸 뒤 끄세요")
-    for a in list(ARMS.values()) + list(LEADERS.values()):
-        try:
-            if a.connected:
-                a.disconnect()
-        except Exception:      # noqa: BLE001 — 가상 보드는 곧 사라지므로 닫기 실패는 무시
-            pass
-    j = next((j for j in jobs_index() if j["kind"] == "sim" and j["alive"]), None)
-    if j:
-        kill_job(j["id"])
-    elif st.get("pid"):
-        try:
-            P.terminate(st["pid"])
-        except (OSError, ValueError):
-            pass
-    back = ""
-    if env_name().startswith(SIM_ENV_PREFIX):
-        sync_active_env()
-        back = (CFG or {}).get("sim_prev_env") or DEFAULT_ENV
-        if not _env_file(back).exists():
-            back = DEFAULT_ENV
-        try:
-            activate_env(back)
-        except ValueError:
-            back = ""
-    return {"ok": True, "env": back}
-
-
-def sim_card_html():
-    """셋업·셋업 마법사 위쪽 카드. 실제 보드가 없으면 크게, 있으면 접어서."""
-    st = sim_state()
-    if st.get("on"):
-        return (f'<div class="card needcard"><div class=needtxt><b>가상 장치 사용 중 — 환경 {esc(env_name())}</b>'
-                '<span class=muted>가상 팔·카메라로 셋업부터 실행까지 해 볼 수 있습니다. 손으로 움직여야 하는 단계는 화면 아래 '
-                '<b>팔로워 움직이기</b>·<b>리더 움직이기</b> 버튼을 쓰세요. 실제 팔을 쓰려면 아래 막대의 <b>가상 장치 끄기</b> — '
-                '전에 쓰던 환경으로 돌아갑니다.</span></div></div>')
-    if env_name().startswith(SIM_ENV_PREFIX):
-        # 재부팅 등으로 가상 장치가 꺼졌는데 환경은 가상 그대로인 경우
-        return (f'<div class="card needcard"><div class=needtxt><b>가상 장치가 꺼져 있습니다 — 환경 {esc(env_name())} 은 가상 팔용입니다</b>'
-                '<span class=muted>다시 켜면 가상 팔·카메라가 같은 경로로 생겨 캘리브레이션을 그대로 씁니다.</span></div>'
-                '<div class=toolbar><button class=primary onclick="simAgain(this)">다시 켜기</button>'
-                '<button onclick="simBack()">전에 쓰던 환경으로</button></div></div>'
-                '<script>async function simAgain(btn){btn.disabled=true;const r=await fetch(\'/api/sim/start\',{method:\'POST\','
-                'headers:{\'Content-Type\':\'application/json\'},body:\'{}\'});const j=await r.json();'
-                'if(j.error){alert(j.error);btn.disabled=false;return;}location.reload();}'
-                'async function simBack(){const r=await fetch(\'/api/sim/stop\',{method:\'POST\'});const j=await r.json();'
-                'if(j.error)alert(j.error);else location.reload();}</script>')
-    real = [p for p in list_serial_ports() if not p.get("sim")]
-    cur_r, cur_m = (CFG or {}).get("robot", "so101"), (CFG or {}).get("mode", "single")
-    opts_r = "".join(f'<option value="{k}"{" selected" if k == cur_r else ""}>{esc(v["label"])}</option>'
-                     for k, v in ROBOT_KINDS.items())
-    opts_m = "".join(f'<option value="{k}"{" selected" if k == cur_m else ""}>{lb}</option>'
-                     for k, lb in (("single", "한팔"), ("bimanual", "양팔")))
-    phys = ('<label title="SO-ARM101 한팔에서 MuJoCo 로 책상·큐브·카메라 화면을 시뮬레이션합니다. 끄면 움직이는 도형만 보이는 단순 가상 장치">'
-            '<input type=checkbox id=simphys checked> 물리 시뮬레이션 (MuJoCo · SO-ARM101 한팔)</label>' if mujoco_ok() else '')
-    form = (f'<div class=toolbar style="margin-top:8px"><select id=simrobot>{opts_r}</select>'
-            f'<select id=simmode>{opts_m}</select>{phys}'
-            '<button class=primary onclick="simStart(this)">가상 장치 켜기</button></div>'
-            '<script>async function simStart(btn){btn.disabled=true;btn.textContent=\'켜는 중…\';'
-            'const r=await fetch(\'/api/sim/start\',{method:\'POST\',headers:{\'Content-Type\':\'application/json\'},'
-            'body:JSON.stringify({robot:document.getElementById(\'simrobot\').value,mode:document.getElementById(\'simmode\').value,'
-            'physics:document.getElementById(\'simphys\')?document.getElementById(\'simphys\').checked:false})});'
-            'const j=await r.json();if(j.error){alert(j.error);btn.disabled=false;btn.textContent=\'가상 장치 켜기\';return;}'
-            'location.href=\'/setup/wizard\';}</script>')
-    desc = ('가상 팔(리더·팔로워)과 가상 카메라를 만들어 셋업 → 캘리브레이션 → 수집 → 학습 → 실행을 끝까지 해 봅니다. '
-            '실제 팔 설정은 그대로 보관되고, 끄면 돌아갑니다.'
-            + (' 물리 시뮬레이션을 켜면 큐브를 집어 초록 칸에 놓는 과제를 자동 시연으로 모으고, 실행 결과를 자동으로 판정합니다.'
-               if mujoco_ok() else ''))
-    if not real:
-        return (f'<div class="card needcard"><div class=needtxt><b>연결된 팔이 없습니다 — 가상 장치로 해 보기</b>'
-                f'<span class=muted>{desc}</span>{form}</div></div>')
-    return (f'<details class=card><summary><b>팔 없이 해 보기 — 가상 장치</b></summary>'
-            f'<p class=muted>{desc}</p>{form}</details>')
-
-
-def sim_send(line):
-    SIM_DIR.mkdir(exist_ok=True)
-    with open(SIM_DIR / "cmd", "a") as f:
-        f.write(line + "\n")
-
-
-def sim_panel_html():
-    """가상 장치가 켜져 있으면 모든 화면 아래쪽에 뜨는 조작 막대 — 손 대신 관절을 움직입니다."""
-    st = sim_state()
-    if not st.get("on"):
-        return ""
-    side_lb = {"left": "왼쪽 ", "right": "오른쪽 "}
-    btns = fault = ""
-    for i, p in enumerate(st.get("ports", []), 1):
-        sd = side_lb.get(p.get("side"), "")
-        role = "팔로워" if p.get("role") == "follower" else "리더"
-        btns += (f'<button class=simw onclick="simCmd({{cmd:\'w\',board:{i}}})" title="4초 동안 관절을 양 끝까지 움직입니다 '
-                 f'(포트 찾기·캘리브레이션·확인 단계에서 손 대신)">{sd}{role} 움직이기</button>')
-        if p.get("role") == "follower":
-            fault += (f'<span class=simf><button onclick="simCmd({{cmd:\'t\',board:{i},value:68}})">{sd}팔로워 과열 흉내</button>'
-                      f'<button onclick="simCmd({{cmd:\'v\',board:{i},value:9}})">{sd}팔로워 전압 강하 흉내</button>'
-                      f'<button onclick="simCmd({{cmd:\'t\',board:{i},value:32}});simCmd({{cmd:\'v\',board:{i},value:12}})">'
-                      f'{sd}팔로워 정상 값으로</button></span>')
-    auto = "리더 자동 움직임: 켜짐" if st.get("auto") else "리더 자동 움직임: 꺼짐"
-    if st.get("physics") == "mujoco":
-        # 물리 시뮬레이션: 리더 자동 시연 · 큐브 다시 놓기 · 과제 판정 (1초마다 갱신)
-        btns += ('<button class=simw onclick="simCmd({cmd:\'demo\'})" title="큐브를 새로 놓고 리더가 큐브를 집어 초록 칸에 놓는 '
-                 '시연을 한 번 합니다 (약 14초). 제어 탭에서 리더 팔로우를 켜 두면 팔로워가 따라 합니다">자동 시연</button>'
-                 '<button class=simw onclick="simCmd({cmd:\'reset\'})">큐브 다시 놓기</button>'
-                 '<span id=simtask class=muted></span>'
-                 '<script>async function simTask(){try{const s=await (await fetch(\'/api/sim\')).json();const t=s.task||{};'
-                 'const e=document.getElementById(\'simtask\');if(!e)return;'
-                 'e.innerHTML=(t.success?\'<b style="color:var(--ok)">과제 성공 — 큐브가 초록 칸에 있음</b>\':\'과제: 큐브를 초록 칸에\')'
-                 '+(t.demo?\' · 시연 중 \'+t.demo+\'초 남음\':\'\');}catch(e){}}simTask();setInterval(simTask,1000);</script>')
-    return (f'<div class=simbar id=simbar><b>가상 장치 켜짐</b><span class=muted>{esc(st.get("robot", ""))} · '
-            f'{"양팔" if st.get("mode") == "bimanual" else "한팔"}'
-            f'{" · 물리 시뮬레이션" if st.get("physics") == "mujoco" else ""}</span>{btns}'
-            f'<button class=simw onclick="simCmd({{cmd:\'a\',on:{"false" if st.get("auto") else "true"}}})" '
-            f'title="리더가 계속 천천히 움직입니다 (제어 리더 팔로우·수집 시험용)">{auto}</button>'
-            f'<details class=simfault><summary>이상 상황 흉내</summary>{fault}'
-            f'<p class=muted>서보 상태 감시(실행·수집 중 자동 정지)를 시험합니다</p></details>'
-            f'<button class=simoff onclick="simStop()">가상 장치 끄기</button></div>'
-            '<script>async function simCmd(b){const r=await fetch(\'/api/sim/cmd\',{method:\'POST\','
-            'headers:{\'Content-Type\':\'application/json\'},body:JSON.stringify(b)});const j=await r.json();'
-            'if(j.error)alert(j.error);else if(b.cmd===\'a\')location.reload();}'
-            'async function simStop(){if(!confirm(\'가상 장치를 끄고 전에 쓰던 환경으로 돌아갈까요?\'))return;'
-            'const r=await fetch(\'/api/sim/stop\',{method:\'POST\'});const j=await r.json();'
-            'if(j.error)alert(j.error);else location.reload();}</script>')
 
 
 def list_serial_ports():
@@ -2146,13 +1931,6 @@ def list_serial_ports():
                       or os.path.basename(dev)),
             "used_by": used.get(dev, []),
         })
-    # 가상 팔 — 이름이 고정된 sim://<이름> 을 by_path 로 둬서 지정한 포트가 재시작해도 유지됩니다
-    for sp in _sim_ports():
-        dev = sp["path"]
-        out.append({"dev": dev, "by_id": "", "by_path": sp["path"],
-                    "usb": {"product": sp.get("label", "가상 팔"), "serial": ""},
-                    "label": sp.get("label", "가상 팔"), "sim": True,
-                    "used_by": used.get(dev, [])})
     return out
 
 
@@ -2198,13 +1976,10 @@ def camera_snapshot(dev, warm=6, width=320):
 
 
 def list_video_devices():
-    """카메라 후보 (openmimic_platform.list_cameras) + 가상 장치 카메라 + 식별용 썸네일.
+    """카메라 후보 (openmimic_platform.list_cameras) + 식별용 썸네일.
     같은 모델 카메라 2개(wrist ×2)는 시리얼 포트와 같은 규칙으로 시리얼 번호가 있을 때만 by-id,
     없으면 by-path(물리 USB 포트 고정) 를 씁니다."""
     found = P.list_cameras()
-    for c in sim_state().get("cams", []):           # 가상 장치가 켜져 있으면 가상 카메라
-        found.append({"dev": c["path"], "by_id": "", "by_path": "", "usb": {}, "width": 320, "height": 240,
-                      "fps": 30, "name": f"가상 카메라 {c['name']}"})
     CAM_SNAPS.clear()
     for f in found:
         jpg = camera_snapshot(f["dev"])
@@ -2777,14 +2552,6 @@ a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .fsbtn{flex:0 0 auto}
 .warnbar{background:rgba(217,161,59,.12);border-bottom:1px solid rgba(217,161,59,.5);color:var(--warn);
   padding:8px 22px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
-.simbar{position:fixed;left:0;right:0;bottom:0;z-index:50;display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;
-  padding:8px 14px;background:var(--surface);border-top:2px solid var(--accent);font-size:13px}
-.simbar button{font-size:12px;padding:4px 9px}
-.simbar .simoff{margin-left:auto}
-.simbar details.simfault summary{cursor:pointer;color:var(--muted)}
-.simbar .simf{display:inline-flex;gap:4px;align-items:center;margin-right:8px}
-.simbar details.simfault p{margin:4px 0 0;font-size:11px}
-body:has(#simbar){padding-bottom:72px}
 .jobtxt{color:inherit;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .langbtn{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:2px 7px;text-decoration:none}
 .langbtn:hover{color:var(--text);border-color:var(--accent);text-decoration:none}
@@ -2953,11 +2720,11 @@ def setup_needed_html():
 # 상단 작업 표시에 쓰는 작업 종류 이름 (영어 화면은 사전의 <span class=jobk>…</span> 항목으로 바뀝니다)
 JOB_KIND_LABEL = {"record": "수집", "train": "학습", "cloudtrain": "클라우드 학습", "rollout": "실행", "control": "제어",
                   "setup": "포트 감시", "hub": "허브", "install": "설치", "ovconvert": "OpenVINO 변환",
-                  "repair": "복구", "delete": "삭제", "sim": "가상 장치"}
+                  "repair": "복구", "delete": "삭제"}
 
 
 def nav_html(active=""):
-    running = [j for j in jobs_index() if j["alive"] and j["kind"] != "sim"]     # 가상 장치는 아래 막대에 따로 표시
+    running = [j for j in jobs_index() if j["alive"] and j["kind"] != "sim"]     # 예전 판의 가상 장치 작업은 숨김
     if any_arm_connected():
         running = [{"id": "manual-control", "kind": "control"}] + running
     if running:
@@ -3004,8 +2771,7 @@ def nav_html(active=""):
             f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             f'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>'
-            f'</svg></button></div>' + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else '')
-            + sim_panel_html())
+            f'</svg></button></div>' + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else ''))
 
 
 # ----------------------------- PWA / 키오스크 -------------------------------
@@ -3166,7 +2932,7 @@ def getting_started():
     """처음 쓰는 사람용 5단계 — (이름, 설명, 링크, 버튼 글, 완료 여부)."""
     cal = calib_status()
     return [
-        ("셋업", "팔(보드)을 USB 에 꽂고 리더·팔로워 포트를 정합니다 — 팔이 없으면 셋업 마법사에서 가상 장치로 해 볼 수 있습니다",
+        ("셋업", "팔(보드)을 USB 에 꽂고 리더·팔로워 포트를 정합니다",
          "/setup/wizard", "셋업 마법사", ports_configured()),
         ("캘리브레이션", "관절을 손으로 움직여 범위를 기록합니다 — 셋업 마법사에서 이어서 합니다", "/setup/wizard", "캘리브레이션",
          all(c["ok"] for sd in cal.values() for c in sd.values())),
@@ -3662,14 +3428,11 @@ def collect_page(resume: str = ""):
       <label class=f id=f_resume style="display:none">이어서 수집할 데이터셋
         <select id=resume_ds>{resume_opts}</select></label>
       <label class=f>목표 에피소드 수 <input id=neps value=50 size=5></label>
-      <label class=f>에피소드 최대(초) <input id=ept value={16 if sim_physics() else 30} size=5></label>
+      <label class=f>에피소드 최대(초) <input id=ept value=30 size=5></label>
       <label class=f style="flex:1;min-width:260px">태스크 설명
         <input id=task value="{esc(task0)}"></label>
       <button class=primary id=bstart onclick="startRec(this)" {'' if ports_configured() and not busy else 'disabled'}>수집 시작</button>
     </div>
-    {'<p><label><input type=checkbox id=simauto checked> <b>가상 시연으로 자동 녹화</b> — 에피소드마다 큐브를 새로 놓고 '
-     '리더가 큐브를 집어 초록 칸에 놓는 시연(약 14초)을 하며, 목표 에피소드 수만큼 저절로 이어서 녹화합니다</label></p>'
-     if sim_physics() else ''}
     <p class=muted><b>자동으로 녹화되지 않습니다.</b> 시작하면 <b>대기</b> 상태로 들어가고,
     그 화면에서 <b>녹화 시작</b>을 눌러야 그때부터 기록됩니다. 한 에피소드를 끝낼 때마다 다시 대기로 돌아옵니다.<br>
     목표 에피소드 수는 진행률 표시용입니다 — 도달해도 멈추지 않으니 <b>수집 끝내기</b>로 마치세요.
@@ -3701,7 +3464,6 @@ def collect_page(resume: str = ""):
         resume_ds:document.getElementById('resume_ds')?.value||'',
         num_episodes:document.getElementById('neps').value,
         episode_time_s:document.getElementById('ept').value,
-        sim_auto:!!document.getElementById('simauto')?.checked,
         task:document.getElementById('task').value}};
       const r=await fetch('/api/record',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(b)}});
       const d=await r.json(); if(d.error)alert(d.error); else {{ if(d.warn&&d.warn.length) alert('전원 점검 — 확인하세요\\n\\n'+d.warn.join('\\n')); location.reload(); }}
@@ -3840,8 +3602,7 @@ async def api_record(req: Request):
             "task": task, "num_episodes": neps, "episode_time_s": ept,
             "repo_id": f"local/{name}", "root": str(DATA_ROOT / name), "resume": resume,
             "streaming_encoding": bool(CFG.get("streaming_encoding", False)),
-            "max_relative_target": mrt_value(CFG.get("max_relative_target")),
-            "sim_auto": bool(b.get("sim_auto")) and sim_physics() is not None}
+            "max_relative_target": mrt_value(CFG.get("max_relative_target"))}
     try:
         jid = start_job("record", [sys.executable, str(Path(__file__).resolve()), "--worker", "record", "{jid}"],
                         spec=spec)
@@ -5315,35 +5076,6 @@ def api_rollout_check(ckpt: str = ""):
             "policy": load_json(ck / "config.json", {}).get("type", "?")}
 
 
-def sim_judge(j, jid, rel, mine, alive):
-    """물리 시뮬레이션 실행이면 과제 성공을 자동으로 기록합니다 — 성공하면 기록하고 실행을 끝내고,
-    성공 없이 끝나면 실패로 기록. 사람이 이미 기록했으면 건드리지 않습니다."""
-    spec = j.get("spec") or {}
-    if not spec.get("sim_task"):
-        return {}
-    task = (sim_state().get("task") or {})
-    fresh = int(task.get("resets", 0)) > int(spec.get("sim_resets0", 0))
-    ok = bool(task.get("success")) and fresh
-    out = {"success": ok, "fresh": fresh}
-    if mine or not rel:
-        return out
-    result = "success" if (ok and alive) else ("fail" if not alive else "")
-    if not result:
-        return out
-    with META_LOCK:
-        trials = load_trials()
-        lst = trials.setdefault(rel, [])
-        if any(x.get("job") == jid for x in lst):
-            return out
-        lst.append({"t": time.strftime("%F %T"), "result": result, "job": jid, "auto": "sim",
-                    "engine": rollout_engine_label(j), "env": env_name()})
-        save_json(TRIALS_FILE, trials)
-    if result == "success":
-        kill_job(jid)                     # 성공했으면 시작 자세로 돌아가며 끝냄 (중지 버튼과 같은 경로)
-    out["recorded"] = result
-    return out
-
-
 @app.get("/api/rollout/status/{jid}")
 def api_rollout_status(jid: str):
     if not safe_name(jid):
@@ -5360,11 +5092,7 @@ def api_rollout_status(jid: str):
         st["phase"] = "ended"           # 강제 종료 등으로 마지막 상태를 못 쓴 경우
     tail = log_tail(jid)
     hint = failure_hint(tail) if (not alive and st.get("phase") in ("error", "ended")) or st.get("phase") == "error" else ""
-    simj = sim_judge(j, jid, rel, mine, alive)
-    if simj.get("recorded"):
-        trials = load_trials()
-        mine = [x for x in trials.get(rel, []) if x.get("job") == jid]
-    return {"alive": alive, "status": st, "tail": tail, "ckpt": rel, "hint": hint, "sim": simj,
+    return {"alive": alive, "status": st, "tail": tail, "ckpt": rel, "hint": hint,
             "engine": rollout_engine_label(j), "started": j.get("started"),
             "trials": {"run": {"n": len(mine), "ok": sum(1 for x in mine if x["result"] == "success")},
                        "ckpt": trial_summary(rel, trials)}}
@@ -5441,7 +5169,6 @@ ROLLOUT_RUN_BODY = """
       <div class=trial><button class=ok-btn onclick="trial('success')">성공 (S)</button>
         <button class=ng-btn onclick="trial('fail')">실패 (F)</button></div>
       <div class=kv><span>이번 실행</span><b id=trun>0 / 0</b><span>이 체크포인트 누적</span><b id=tck>-</b></div>
-      <p id=simres class=badge style="display:none;margin:8px 0 0"></p>
       <p class=muted style="margin:8px 0 0">물체를 놓고 한 번 시도할 때마다 결과를 누르세요. 체크포인트별 실기 성공률로 모델을 비교합니다.
         <a href="#" onclick="trial('undo');return false">마지막 기록 취소 (U)</a></p>
     </div>
@@ -5550,12 +5277,6 @@ async function refresh(){
   const tr=d.trials||{}, run=tr.run||{n:0,ok:0}, ck=tr.ckpt||{};
   $('trun').textContent=run.ok+' 성공 / '+run.n+' 시도';
   $('tck').textContent=ck.n?(ck.ok+' / '+ck.n+' ('+ck.rate+'%)'):'기록 없음';
-  const sj=d.sim||{};
-  if(sj.fresh!==undefined){
-    $('simres').style.display='';
-    $('simres').className='badge '+(sj.success?'b-ok':(d.alive?'b-run':'b-bad'));
-    $('simres').textContent=sj.success?'가상 과제 판정: 성공 — 자동 기록':(d.alive?'가상 과제 판정: 진행 중 — 큐브가 초록 칸에 놓이면 성공':'가상 과제 판정: 실패 — 자동 기록');
-  }
   $('tail').textContent=(st.err?'!! '+st.err+'\\n\\n':'')+(d.tail||'');
   $('hint').style.display=d.hint?'':'none'; $('hint').textContent=d.hint?'원인 추정: '+d.hint:'';
   if(d.hint) document.querySelector('details').open=true;
@@ -5760,14 +5481,8 @@ async def api_rollout(req: Request):
     busy = exclusive_busy()      # 점검하는 동안 제어 탭 등이 팔을 잡았으면 (수집 시작과 같은 재확인)
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
-    sim = sim_physics()
-    spec = None
-    if sim:
-        # 물리 시뮬레이션: 큐브를 새로 놓고, 그 뒤의 '과제 성공' 만 이 실행의 결과로 셉니다
-        spec = {"sim_task": True, "sim_resets0": int((sim.get("task") or {}).get("resets", 0))}
-        sim_send("reset")
     try:
-        jid = start_job("rollout", argv, spec=spec)
+        jid = start_job("rollout", argv)
     except JobStartError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
     return {"ok": True, "job": jid, "warn": pwarn}
@@ -6474,7 +6189,7 @@ def _validate_cam(name, spec, seen):
         return f"카메라 {name} 형식 오류"
     idx = spec.get("index_or_path")
     if isinstance(idx, str):
-        if not P.camera_path_ok(idx) and openmimic_simcam.sim_cam_name(idx) is None:
+        if not P.camera_path_ok(idx):
             return f"카메라 {name} 경로는 {P.camera_path_hint()}"
     elif not isinstance(idx, int) or isinstance(idx, bool) or idx < 0:
         return f"카메라 {name} 인덱스가 잘못됨"
@@ -6598,8 +6313,7 @@ def validate_config(cfg):
 
 @app.get("/setup", response_class=HTMLResponse)
 def setup_page():
-    return CSS + nav_html("st") + SETUP_HTML.replace("<p class=eyebrow id=envcard>",
-                                                     sim_card_html() + "<p class=eyebrow id=envcard>", 1)
+    return CSS + nav_html("st") + SETUP_HTML
 
 
 @app.get("/api/setup/state")
@@ -7014,7 +6728,7 @@ def convert_mode(cfg, mode):
     old = {r: a[f"{r}_id"] for r in ("follower", "leader")}
     if mode == "bimanual":
         # 양팔 id 는 'X_left' / 'X_right' 짝이어야 하므로(bimanual_base_id), 지금 id 를 X 로 삼아 둘 다 만듭니다
-        # (follower → follower_left / follower_right, sim_follower → sim_follower_left / sim_follower_right)
+        # (follower → follower_left / follower_right, b2_follower → b2_follower_left / b2_follower_right)
         a["side"] = "left"
         right = {}
         for r in ("follower", "leader"):
@@ -7123,8 +6837,7 @@ async def api_wizard_robot(req: Request):
 
 @app.get("/setup/wizard", response_class=HTMLResponse)
 def wizard_page():
-    r = HTMLResponse(CSS + nav_html("st") + WIZARD_HTML.replace("<div class=modebar id=modebar></div>",
-                                                                sim_card_html() + "<div class=modebar id=modebar></div>", 1))
+    r = HTMLResponse(CSS + nav_html("st") + WIZARD_HTML)
     r.set_cookie(WIZ_COOKIE, "1", max_age=365 * 86400, samesite="lax")
     return r
 
@@ -7178,58 +6891,6 @@ def calib_rename_copies(old_cfg, new_cfg):
 
 
 # ----------------------------- 환경 API --------------------------------------
-@app.get("/api/sim")
-def api_sim():
-    return sim_state()
-
-
-@app.post("/api/sim/start")
-async def api_sim_start(request: Request):
-    b = await request.json()
-    robot = b.get("robot") or CFG.get("robot") or "so101"
-    mode = b.get("mode") or CFG.get("mode") or "single"
-    try:
-        return sim_start(robot, mode, physics=b.get("physics", True) is not False)
-    except (ValueError, RuntimeError, JobStartError) as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-
-
-@app.post("/api/sim/stop")
-def api_sim_stop():
-    try:
-        return sim_stop()
-    except ValueError as e:
-        return JSONResponse({"error": str(e)}, status_code=400)
-
-
-@app.post("/api/sim/cmd")
-async def api_sim_cmd(request: Request):
-    b = await request.json()
-    st = sim_state()
-    if not st.get("on"):
-        return JSONResponse({"error": "가상 장치가 꺼져 있습니다"}, status_code=400)
-    cmd, n = b.get("cmd"), b.get("board")
-    nb = len(st.get("ports", []))
-    if cmd == "a":
-        sim_send("a on" if b.get("on") else "a off")
-    elif cmd in ("demo", "reset"):
-        if st.get("physics") != "mujoco":
-            return JSONResponse({"error": "물리 시뮬레이션 가상 장치에서만 됩니다"}, status_code=400)
-        sim_send("demo new" if cmd == "demo" else "reset")
-    elif cmd in ("w", "v", "t") and isinstance(n, int) and not isinstance(n, bool) and 1 <= n <= nb:
-        if cmd == "w":
-            sim_send(f"w {n}")
-        else:
-            v = b.get("value")
-            lim = (0, 25) if cmd == "v" else (0, 120)
-            if not isinstance(v, (int, float)) or isinstance(v, bool) or not lim[0] <= v <= lim[1]:
-                return JSONResponse({"error": "값이 잘못됐습니다"}, status_code=400)
-            sim_send(f"{cmd} {n} {v}")
-    else:
-        return JSONResponse({"error": "명령이 잘못됐습니다"}, status_code=400)
-    return {"ok": True}
-
-
 @app.get("/api/envs")
 def api_envs():
     return {"active": env_name(), "envs": list_envs()}
@@ -10112,8 +9773,6 @@ def worker_record(jid):
             dataset=None 이면 record_loop 은 add_frame 을 건너뜁니다."""
             ui["start"] = False
             events["rerecord_episode"] = False    # 대기 중에 누른 '버리고 다시' 가 다음 에피소드를 버리지 않게
-            if sim_auto:
-                sim_send("reset")                 # 녹화 전에 큐브를 새로 놓아 첫 프레임부터 새 장면
             put(phase="ready", t0=None, phase_len=0, episode=dataset.num_episodes, last=last)
             while not ui["start"] and not events["stop_recording"]:
                 record_loop(robot=robot, events=events, fps=fps,
@@ -10121,24 +9780,17 @@ def worker_record(jid):
                             robot_observation_processor=rop, teleop=teleop,
                             control_time_s=READY_CHUNK_S, single_task=task)
                 put()
-                if sim_auto:
-                    ui["start"] = True            # 가상 시연 자동 녹화 — 한 번 쉬고(큐브를 새로 놓은 뒤) 바로 다음 에피소드
             events["exit_early"] = False
             events["rerecord_episode"] = False
             ui["start"] = False
 
-        sim_auto = bool(spec.get("sim_auto"))
         with VideoEncodingManager(dataset):
             recorded = 0
             last = ""
             while not events["stop_recording"]:
-                if sim_auto and recorded >= int(spec.get("num_episodes") or 0):
-                    break                        # 자동 녹화는 목표 에피소드 수에서 끝냅니다
                 idle(last)                       # 사람이 '녹화 시작' 을 누를 때까지 기다립니다
                 if events["stop_recording"]:
                     break
-                if sim_auto:
-                    sim_send("demo")             # 리더가 지금 큐브 위치로 시연 — 이 에피소드에 그대로 녹화
                 put(phase="record", episode=dataset.num_episodes, recorded=recorded,
                     t0=time.time(), phase_len=ept, last="")
                 logging.info(f"Recording episode {dataset.num_episodes}")
@@ -10497,6 +10149,7 @@ def serve_video(ds: str, rest: str):
 if __name__ == "__main__":
     if len(sys.argv) >= 4 and sys.argv[1] == "--worker":
         sys.exit(worker_main(sys.argv[2], sys.argv[3]))
+    leave_old_sim_env()
     print(f"data : {DATA_ROOT}\nouts : {OUT_ROOT}\njobs : {JOB_DIR}\nrun  : {RUN_DIR}")
     print(f"conf : {CONFIG_FILE}  (mode={CFG['mode']}, arms={SIDES}, cams={list(CAM_SPECS)})")
     for u in lan_urls(PORT):

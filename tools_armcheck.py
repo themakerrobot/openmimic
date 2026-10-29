@@ -431,8 +431,6 @@ def list_ports():
 
 
 def main(argv=None):
-    import openmimic_fakeserial
-    openmimic_fakeserial.install()          # --port sim://… 면 가상 팔 도구의 보드
     P.utf8_stdio()                          # Windows 에서 activate 없이 돌려도 한국어 출력이 깨지지 않게
     ap = argparse.ArgumentParser(description="SO-101 팔(보드 1개) 불량 점검")
     ap.add_argument("--port", help="서보 드라이버 보드 포트 (생략 시 하나뿐이면 자동)")
@@ -451,7 +449,7 @@ def main(argv=None):
             print("포트를 지정하세요 (--port). 보이는 포트:\n  " + ("\n  ".join(ports) or "(없음)"), file=sys.stderr)
             return 3
         port = ports[0]
-    if not (P.port_exists(port) or P.is_sim_port(port)):
+    if not P.port_exists(port):
         print(f"포트가 없습니다: {port}", file=sys.stderr)
         return 3
     try:

@@ -2,6 +2,9 @@
 
 한 코드베이스로 Ubuntu 22.04 / 24.04 / 26.04 와 Windows 10 / 11 에서 돌도록 바꾼 내용, 확인한 것과 못 한 것을 모았습니다.
 
+> 포팅 뒤 가상 장치 기능(가상 팔·가상 카메라·MuJoCo 물리 시뮬레이션 — `tools_simarms.py`, `openmimic_fakeserial.py`,
+> `openmimic_simcam.py`, `openmimic_mujoco.py`)은 제거했습니다. 아래에서 가상 장치를 다룬 항목은 포팅 당시의 기록입니다.
+
 **요약**
 
 - Ubuntu 는 가상 장치 전 구성 회귀 시험을 통과했습니다. 변경 전 코드로 같은 시험을 돌려 결과를 비교했습니다.
@@ -139,8 +142,6 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | `openmimic_platform.py` `_dshow_from_ffmpeg` | ffmpeg 목록에서 빠지는 장치('(none)' 가상 카메라 등)가 있을 때 인덱스가 어긋나는지 |
 | `openmimic_platform.py` `_win_cameras` (폴백) | pygrabber·ffmpeg 가 둘 다 없으면 번호로만 지정 — 재부팅·재연결 때 순서가 바뀔 수 있음 |
 | `openmimic_platform.py` `stdin_line_ready` | Windows 콘솔에서 msvcrt 로 Enter 감지 (`tools_armcheck --sweep`) |
-| `openmimic_platform.py` `setup_mujoco_gl` | 원격 데스크톱·서비스 세션처럼 데스크톱이 없을 때 `wgl` 숨은 창이 만들어지는지 |
-| `openmimic_mujoco.py` `_write_frame` | 쓰는 쪽·읽는 쪽이 같은 파일을 동시에 memmap 할 때 |
 | `openmimic_platform.py` `replace_file` · `read_text` | 2 초 다시 시도로 충분한지 (Defender 검사가 더 길면 저장 실패가 남음) |
 | `install.ps1` XPU | 휠 설치·장치 인식은 확인 (`2.11.0+xpu`, `xpu: True`, Arc 140V). **학습이 실제로 도는지**는 아직 |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |

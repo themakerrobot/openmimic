@@ -38,11 +38,8 @@ Diffusion·SmolVLA 패키지까지 설치합니다. 기기 종류는 자동으�
 - conda(miniforge)는 `~/miniforge3` 에 **설치만** 합니다. `conda init` 을 하지 않아 `~/.bashrc` 가 그대로이고, 터미널을 열어도 conda 가
   켜지지 않습니다. `~/.condarc` 도 쓰지 않습니다.
 - torch·lerobot·openvino 등 파이썬 패키지는 전부 conda 환경 `openmimic` 안에만 들어갑니다. 시스템 python·pip 는 그대로입니다.
-- 가상 장치 물리 시뮬레이션용 `mujoco` 도 같은 환경에 설치합니다. 설치에 실패하면 경고만 남기고, 가상 장치는 물리 시뮬레이션 없이 동작합니다.
-  이미 설치한 기기는 `source activate.sh && pip install "mujoco>=3.2"` 한 번이면 됩니다.
 - 쓸 때만 `source ~/project/openmimic/activate.sh` 로 그 터미널에서 켭니다. 데이터·HF 캐시·torch 캐시도 레포 `data/` 안에 둡니다.
-- 시스템에 하는 일: apt 기본 도구 몇 개(git, curl, build-essential, pkg-config, libgl1, libglib2.0, v4l-utils,
-  가상 장치 물리 시뮬레이션 카메라 렌더용 libegl1·libosmesa6),
+- 시스템에 하는 일: apt 기본 도구 몇 개(git, curl, build-essential, pkg-config, libgl1, libglib2.0, v4l-utils),
   시리얼 보드 udev 권한 규칙, 설치한 계정을 `dialout`·`video`(Intel 은 `render`) 그룹에 추가 — **재로그인 후** 반영.
 - NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다.
 - 지우기: `rm -rf ~/project/openmimic ~/miniforge3` (다른 conda 를 이미 쓰고 있었다면 `~/miniforge3` 가 이 스크립트가 만든 것인지 확인 후)
@@ -59,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # 로그: lerobot_co
 ```
 
 `lerobot_conda.sh` 와 같은 순서로 설치합니다 — miniforge(설치만), conda 환경 `openmimic`(Python 3.12), PyTorch(위 표),
-lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), Feetech·Dynamixel 패키지, `plugins/` 3종, mujoco,
+lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), Feetech·Dynamixel 패키지, `plugins/` 3종,
 `win-intel` 이면 OpenVINO/NNCF. Linux 의 apt·udev·그룹 단계는 없습니다. 더해서:
 
 - `pygrabber` — 카메라를 번호 대신 DirectShow 장치 경로로 기억합니다 (같은 모델 2대 구분, 재부팅 뒤 순서가 바뀌어도 같은 카메라).
@@ -78,7 +75,6 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
 | conda | `%USERPROFILE%\miniforge3` (환경: `envs\openmimic`) |
 | 레포·데이터·설정 | Linux 와 같은 상대 경로 (`data\hf\…`, `outputs\…`, `openmimic_*.json`) |
 | 수집 worker 상태 파일 | 레포 `openmimic_run\` (Linux 는 `/dev/shm/openmimic`) |
-| 가상 장치 카메라 프레임 | `%TEMP%\openmimic_sim\` (Linux 는 `/dev/shm/openmimic_sim`) |
 | 환경 켜기 | `. .\activate.ps1` (점 + 공백). 실행 정책이 막으면 `powershell -ExecutionPolicy Bypass -NoExit -Command ". .\activate.ps1"` |
 
 ```powershell

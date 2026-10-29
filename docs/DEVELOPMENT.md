@@ -21,7 +21,6 @@
 - [Hugging Face Hub · HF Jobs](#hugging-face-hub--hf-jobs)
 - [데이터셋 복구·사전 점검·수집 신호음 등](#데이터셋-복구사전-점검수집-신호음-등)
 - [화면 구조 — 탭·첫 실행·막힘 안내](#화면-구조--탭첫-실행막힘-안내)
-- [가상 장치 (화면에서 켜기)](#가상-장치-화면에서-켜기)
 - [한/영 전환 (i18n)](#한영-전환-i18n)
 - [Intel 기기 학습 (XPU, 실험적)](#intel-기기-학습-xpu-실험적)
 - [lerobot 버전·설치](#lerobot-버전설치)
@@ -41,11 +40,8 @@
 | `openmimic_ov.py` | ACT·ACT2 → OpenVINO 변환·검증(`convert`), 장치 조회(`devices`), OpenVINO 추론으로 lerobot-rollout 실행(`rollout`). OpenMimic 은 이 파일을 별도 프로세스로 띄웁니다 |
 | `tools_jscheck.py` | 모든 페이지의 인라인 JS 를 `node --check` 로 파싱 검증 (`--en` 이면 영어 치환 후 검증) |
 | `openmimic_i18n_en.json` | 영어 화면 사전 — 한국어 조각 → 영어 (한/EN 버튼) |
-| `tools_simarms.py` | 가상 팔 — STS3215 / Dynamixel X 보드를 흉내내 `sim://<이름>` 포트로 내놓음 (127.0.0.1 소켓). 켜 있으면 `openmimic_sim.json` 에 포트·접속 주소·가상 카메라를 알리고 OpenMimic 포트 목록에 추가됨. 셋업 화면의 '가상 장치 켜기' 가 작업으로 띄움 |
-| `openmimic_fakeserial.py` | 가상 팔 포트 — `serial.Serial(port="sim://…")` 만 `FakeSerial`(소켓으로 가상 팔 도구의 보드에 연결)로 바꾸고 실제 포트는 그대로. 서버·수집 worker·롤아웃·점검 도구가 시작할 때 `install()` |
-| `openmimic_simcam.py` | 가상 카메라 — `openmimic_sim/cam_<이름>` 경로면 합성 영상, 아니면 원래 `cv2.VideoCapture` |
 | `openmimic_health.py` | 서보 상태 감시 — 시작 전 전원 점검(`power_check` 계열)과 실행 중 온도·전압·보호 플래그 감시(`HealthGuard`) |
-| `openmimic_platform.py` | Linux / Windows 차이를 모은 곳 — 시리얼 포트·카메라 나열과 식별자 해석, 작업 프로세스 띄우기·중지·생존 확인, 공유 폴더, MuJoCo 렌더 백엔드, OS 별 안내 문구 |
+| `openmimic_platform.py` | Linux / Windows 차이를 모은 곳 — 시리얼 포트·카메라 나열과 식별자 해석, 작업 프로세스 띄우기·중지·생존 확인, 공유 폴더, OS 별 안내 문구 |
 | `plugins/lerobot_robot_bi_omx/` | 양팔 OMX 팔로워 `bi_omx_follower` (lerobot 플러그인) |
 | `plugins/lerobot_teleoperator_bi_omx/` | 양팔 OMX 리더 `bi_omx_leader` |
 | `plugins/lerobot_policy_act2/` | ACT2 정책 `act2` — lerobot ACT 블록을 import 하고 증강·청크 보간·DINOv2 백본·flow 헤드를 설정으로 붙임 |
@@ -154,10 +150,9 @@ Linux 쪽은 원래 `main.py` 등에 있던 코드를 그대로 옮겼습니다.
 | 같은 장치 비교 `port_key` | `realpath` | 해석한 COM 이름 |
 | 카메라 `list_cameras` · `resolve_camera` | lerobot `find_cameras` + `/dev/v4l/by-id`·`by-path`, 값은 그대로 | DirectShow 장치 순서 = OpenCV `CAP_DSHOW` 인덱스. 안정 식별자는 `dshow:<장치 경로>`(pygrabber, 없으면 ffmpeg 목록), 열 때 인덱스 + `CAP_DSHOW` 로 바꿈 |
 | 작업 띄우기·중지 `spawn_job` · `stop_job` | 새 세션 · 프로세스 그룹에 SIGINT / SIGKILL | 새 프로세스 그룹 · `CTRL_BREAK` / `taskkill /T /F` |
-| 생존 확인 `job_alive` · `pid_exists` | `waitpid`·`kill(pid, 0)`·`/proc` 좀비 판정 | psutil (Windows 의 `os.kill(pid, 0)` 은 확인이 아니라 **종료**라 쓰면 안 됨) |
+| 생존 확인 `job_alive` | `waitpid`·`kill(pid, 0)`·`/proc` 좀비 판정 | psutil (Windows 의 `os.kill(pid, 0)` 은 확인이 아니라 **종료**라 쓰면 안 됨) |
 | 중지 처리기 `install_stop_handlers` · `forward_break_to_sigint` | SIGINT·SIGTERM | + SIGBREAK. lerobot 롤아웃은 SIGINT 처리기만 달기 때문에 CTRL_BREAK 를 그 처리기로 넘겨 시작 자세 복귀·토크 해제를 탑니다 |
-| 공유 폴더 `shm_dir` · `frame_dir` | `/dev/shm` (없으면 레포 폴더) | 레포 폴더 · 임시 폴더 |
-| MuJoCo 렌더 `setup_mujoco_gl` | 하드웨어 EGL → OSMesa | `wgl` 하나만 시험, 안 되면 물리 시뮬레이션 없이 가상 장치를 켬 |
+| 공유 폴더 `shm_dir` | `/dev/shm` (없으면 레포 폴더) | 레포 폴더 |
 | 안내 문구 `TEXT` | dialout · `/dev/serial/by-id` | 장치 관리자 · COM · USB 위치 |
 
 설정 파일에는 계속 by-id 우선, 없으면 by-path(USB 위치)를 저장합니다. Windows 의 `COM5` 같은 이름은 꽂을 때마다 바뀔 수 있어 저장하지 않고,
@@ -176,10 +171,8 @@ Windows 에서 따로 챙긴 것:
 - **파일 잠금**: 열린 파일은 지우거나 바꿔치기할 수 없습니다.
   - 설정 등 바꿔치기는 `P.replace_file`, 읽기는 `P.read_text` 로 잠깐 다시 시도합니다.
   - 명령 파일은 `P.take_file`(이름 바꾸고 읽기)로 가져옵니다.
-  - 렌더 프레임은 같은 크기면 덮어씁니다.
   - 데이터셋 이름 바꾸기·지우기는 `P.move_dir`·`P.remove_dir`(열린 파일이 있으면 통째로 실패)입니다.
 - **이름**: Windows 가 못 쓰는 이름(끝의 `.`, `con`·`nul`·`com1` 등)은 `safe_name` 이 `P.name_ok` 로 막습니다.
-- **롤아웃 CLI 카메라 경로**: `C:\Users\…\openmimic_sim\cam_top` 처럼 역슬래시·공백이 든 경로도 draccus 가 따옴표 없이 그대로 받는 것을 확인했습니다.
 
 ## 셋업 마법사 내부
 
@@ -294,7 +287,7 @@ EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 
 - **수집** — `q` 와 같은 경로 (녹화 중이던 에피소드는 버리고 끝냄 — 이상 구간을 데이터에 남기지 않음)
 - **제어** — 토크는 두고(팔이 떨어지지 않게) 리더 팔로우를 끄고 명령을 현재 위치로 고정, 정지 조건이 풀릴 때까지 슬라이더 명령 무시
 
-가상 팔에서 잰 비용: 실행 제어 주기 29.8 Hz (목표 30). 실제 팔에서의 지연·오탐 여부는 아직 실측 전입니다.
+에뮬레이터에서 잰 비용: 실행 제어 주기 29.8 Hz (목표 30). 실제 팔에서의 지연·오탐 여부는 아직 실측 전입니다.
 
 ## 수집 worker
 
@@ -518,60 +511,6 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 - **모바일**(820px 이하): 넓은 표는 카드 안에서만 가로로 밀리고(`.card{overflow-x:auto}`), 긴 경고 배지(`p.badge`)는 줄바꿈합니다.
   상태 칩은 포트 미설정 · 작업 상태 · 한/EN 만 남깁니다. 390px 폭에서 전 화면 가로 넘침 0 을 확인했습니다.
 
-## 가상 장치 (화면에서 켜기)
-
-팔·카메라 없이 셋업부터 실행까지 해 보는 기능. `POST /api/sim/start {robot, mode}` 가 `tools_simarms.py` 를 작업(`sim`)으로 띄우고
-`openmimic_sim.json` 이 생길 때까지 기다린 뒤, 환경을 `sim-<기종>-<모드>` 로 바꿉니다.
-
-- 켜기 전 환경을 `sync_active_env()` 로 그 환경 파일에 보관하고, 가상 환경에 `sim_prev_env` 로 적어 둡니다.
-  `POST /api/sim/stop` 은 가상 팔을 쓰는 연결·작업을 정리하고 그 환경으로 되돌립니다. 가상 장치가 죽은 채 가상 환경이 남아 있으면
-  셋업 화면이 '다시 켜기 / 전에 쓰던 환경으로' 를 보여 줍니다.
-- 포트는 `sim://<side>_<role>` 이라 껐다 켜도 이름이 같고, 캘리브 id 는 `sim_follower` 처럼 따로 둬 실제 팔 파일과 섞이지 않습니다.
-- **가상 시리얼** (`openmimic_fakeserial`): 보드 레지스터(캘리브레이션 값·토크)와 MuJoCo 장면은 서버·수집 worker·롤아웃이 함께 봐야 하므로
-  가상 팔 도구 프로세스 하나에 둡니다. 각 프로세스는 `install()` 로 `serial.Serial` 자리에 생성 함수를 두어, `sim://` 포트일 때만
-  `FakeSerial` 이 `127.0.0.1` 의 가상 팔 도구에 접속합니다 (`OMSIM2 <토큰> <보드>` 인사 뒤로는 `4바이트 길이 + 내용` 틀 단위 — write 하나에 응답 틀 하나, 답할 패킷이 없으면 빈 틀, 연결마다 따로 응답).
-  응답 틀이 오기 전의 read 는 그 틀을 최대 2초 기다립니다. 가상 장치 프로세스가 잠깐 늦어도(Windows 스레드 전환·GIL)
-  servo SDK 의 응답 제한 시간(약 34 ms)에 걸려 `There is no status packet` 으로 끊기지 않게 하려는 것입니다.
-  scservo_sdk · dynamixel_sdk 가 `serial.Serial(...)` 을 그 자리에서 만들기 때문에 lerobot 코드는 그대로입니다. PTY·com0com 같은 OS 기능이 없어
-  Linux · Windows 가 같은 경로를 탑니다. 예전 PTY 판과 같은 시험(가상 장치 전 구성)을 모두 통과합니다.
-- 가상 팔 도구는 보드 잠금 안에서 레지스터만 읽고 MuJoCo 호출(월드 잠금)은 그 밖에서 합니다. 두 잠금을 겹쳐 잡으면 에피소드 사이 시연 계획(이 서버에서 약 80 ms)
-  동안 시리얼 응답이 멈춰, lerobot 이 응답 제한 시간(약 35 ms)을 넘겨 `There is no status packet` 으로 수집이 끊겼습니다 (예전 PTY 판에서도 재현).
-- 명령 파일(`openmimic_sim/cmd`, 수집 worker 의 `cmd`)은 이름을 바꾼 뒤 읽고 지웁니다(`P.take_file`) — Windows 는 쓰는 쪽이 연 파일을 지울 수 없어
-  '읽고 → 지우기' 면 같은 명령이 다시 실행됩니다.
-- 화면 아래 막대 → `POST /api/sim/cmd` → `openmimic_sim/cmd` 에 한 줄씩 (`w <보드>` 쓸기, `a on|off` 리더 자동, `v <보드> <V>`, `t <보드> <°C>`).
-  전압·온도 명령은 서보 상태 감시를 시험하는 용도입니다.
-- 가상 카메라(`openmimic_simcam`)는 `openmimic_sim/cam_<이름>` 경로를 연 쪽에서 합성 영상을 만듭니다 (서버·수집 worker 는 `main.py` import 때,
-  실행은 `openmimic_rollout.main()` 에서 설치). `cv2.VideoCapture` 를 Python 에서 **상속하면** OpenCV 바인딩의 객체 해제와 맞지 않아
-  제어 탭을 빠르게 열고 닫을 때 서버가 segfault 로 죽었습니다 (4회 중 2회 재현). 그래서 상속하지 않고, 가상 경로면 별도 객체·아니면
-  원래 `cv2.VideoCapture` 객체를 돌려주는 생성 함수 + `isinstance` 를 통과시키는 메타클래스로 바꿨습니다 (같은 시험 5회 모두 정상).
-
-### 물리 시뮬레이션 (MuJoCo)
-
-`openmimic_mujoco.py`. SO-ARM101 한팔이고 `mujoco` 가 있으면 `tools_simarms.py --physics auto` 가 팔로워 서보의 '몸' 을
-MuJoCo 로 바꿉니다. 서보 프로토콜(가상 시리얼 `sim://`)은 그대로라 OpenMimic·lerobot 쪽 코드는 실제 팔과 같은 경로를 탑니다.
-
-- **모델**: `urdf/so101_new_calib.xml` (TheRobotStudio SO-ARM100 의 MJCF, Apache 2.0 — `meshdir` 만 `urdf/` 로).
-  책상·물체·목표·카메라는 `MjSpec` 으로 불러올 때 붙입니다. 그리퍼·턱 말고는 충돌을 꺼서 계산량을 줄였습니다.
-- **틱 ↔ 관절각**: `rad = (틱 − 2048) × 2π / 4096`. 팔로워 목표(Goal_Position + Homing)가 위치 액추에이터 명령(STS3215 값:
-  kp 998, 힘 제한 ±2.94 N·m — MJCF 원본), 관절각이 엔코더 값(Present_Position)이 됩니다. 토크가 꺼진 관절은 지금 자세를 유지하고,
-  마법사 '움직이기' 는 관절을 바로 놓습니다(텔레포트). 쓸기 범위는 MJCF 관절 범위라 리더·팔로워 캘리브레이션 범위가 같아집니다.
-- **렌더**: 별도 스레드가 top · wrist 를 그려 `frame_dir()/cam_<이름>.rgb`(Linux `/dev/shm/openmimic_sim`, Windows 임시 폴더 · 머리 16 B + RGB)에 쓰고,
-  `openmimic_simcam` 이 그 파일을 읽어 카메라로 내줍니다. 백엔드는 별도 프로세스로 시험해 하드웨어 EGL → OSMesa 순으로 고릅니다
-  (MuJoCo 는 import 할 때 백엔드를 정함, 소프트웨어 EGL 은 OSMesa 보다 느림). 이 개발 서버(CPU 전용)는 OSMesa 로 320×240 한 장 약 80 ms.
-- **그립 보조**: 턱 충돌 모양이 메시의 볼록 껍질이라 마찰만으로는 큐브가 밀려납니다. 그리퍼가 닫히는 중이고 큐브 중심이
-  끝점(`gripperframe`) 3 cm 안이면 큐브를 그리퍼 좌표계에 고정하고, 다시 열리면 놓습니다.
-- **자동 시연**: IK(끝점 위치 + 그리퍼가 아래를 향하게, 감쇠 최소제곱)로 경유점(위 → 내려가 → 닫기 → 들기 → 목표 위 → 내려놓기 → 열기 → 시작 자세)을
-  만들고, 리더 엔코더를 그 궤적대로 움직입니다. 수집 worker 는 자동 녹화일 때 대기 중 `reset`, 녹화 시작에 `demo` 를 보냅니다.
-  무작위 큐브 위치 20개에서 시연 성공 20/20.
-- **판정**: 큐브가 초록 칸 안 + 책상 위 + 그리퍼가 놓음. 실행 시작 때 `reset` 을 보내고 그 뒤의 성공만 셉니다(`resets` 카운터).
-  `/api/rollout/status` 가 성공이면 시도를 기록하고 실행을 끝내며(SIGINT), 성공 없이 끝나면 실패로 기록합니다 (`auto: "sim"`).
-- **학습 속도**: 가속 장치 없는 CPU 4코어에서 ACT(카메라 2개 320×240, batch 8)는 스텝당 약 14 초입니다 (시뮬레이션 렌더와 CPU 를 나눠 씀).
-  시뮬레이션 데이터라도 실제로 쓸 만한 학습은 Intel GPU(XPU) 같은 가속 장치나 HF 작업이 필요합니다.
-- **확장**: `ROBOTS[이름]`(MJCF·관절·끝점·그리퍼 각도·시작 자세·카메라·틱 환산)과 `TASKS[이름]`(`Task` 상속:
-  build · bind · reset · plan · step · judge)을 따로 둡니다. 다른 로봇은 MJCF(또는 MuJoCo 가 읽는 URDF + 위치 액추에이터)와 프로필,
-  다른 과제는 `Task` 하나를 추가하면 수집·실행 화면이 그대로 씁니다. 로봇의 서보 프로토콜이 Feetech / Dynamixel 이 아니면
-  `tools_simarms.py` 에 보드 흉내를 추가해야 합니다.
-
 ## 한/영 전환 (i18n)
 
 화면 문자열은 소스에 한국어로 그대로 둡니다. 영어 모드(쿠키 `openmimic_lang=en`, 기본값은 `OPENMIMIC_LANG`)면 서버가 응답을 내보내기
@@ -628,7 +567,7 @@ Intel NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다. 
 
 하드웨어 없이 다음으로 검증했습니다 (스크립트는 레포에 넣지 않았습니다):
 
-- STS3215 / Dynamixel X(Protocol 2.0) **에뮬레이터**(처음엔 PTY, 지금은 `sim://` 가상 시리얼) + 실제 lerobot 버스 — 진단, 캘리브레이션(범위·공장값·가져오기),
+- STS3215 / Dynamixel X(Protocol 2.0) **에뮬레이터**(시험용 — 레포에는 넣지 않음) + 실제 lerobot 버스 — 진단, 캘리브레이션(범위·공장값·가져오기),
   확인 단계, Control 연결 순서·E-STOP·과부하 모터, 포트 감시, 모터 ID 세팅, 양팔 OMX 플러그인
 - lerobot API 스텁 — Collect 상태 기계, 양팔 녹화 worker, 강제 종료, 환경·프로젝트
 - 헤드리스 Chromium — SO 한팔·양팔, OMX 한팔·양팔 네 구성에서 전 페이지 JS 오류 0
