@@ -1917,7 +1917,8 @@ class CamStreamer:
                 cam.connect()
                 self.cams[name] = cam
             except Exception as e:
-                self.errors[name] = f"{type(e).__name__}: {e}"
+                hint = failure_hint(str(e))
+                self.errors[name] = f"{type(e).__name__}: {e}" + (f" — {hint}" if hint else "")
                 print(f"[openmimic] 카메라 '{name}' 열기 실패: {e}")
         if not self.cams:
             return False
@@ -3884,7 +3885,8 @@ FAILURE_HINTS = [
     (P.TEXT["perm_regex"], P.TEXT["perm_hint"]),
     (r"could not open port|No such file or directory: '/dev|Failed to open port|SerialException",
      "시리얼 포트를 열지 못했습니다 — 포트 경로(Setup), USB 연결, 다른 프로그램(제어 탭 등)이 잡고 있는지 확인하세요."),
-    (r"failed to set capture_(width|height|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — Setup 카메라 설정을 바꾸세요."),
+    (r"failed to set (capture_(width|height)|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — Setup 카메라 설정을 바꾸세요."),
+    (r"failed to set fourcc", "카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 셋업 › 카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요."),
     (r"OpenCVCamera.*(read failed|Timed out|timeout|not connected)|frames? too old|Failed to capture",
      "카메라 프레임을 못 받았습니다 — 카메라 연결, USB 대역폭(허브에 여러 대), 다른 프로그램 점유를 확인하세요."),
     (r"Mismatch between calibration|EOFError", "캘리브레이션 파일과 모터 값이 다릅니다 — 캘리브레이션 탭에서 다시 캘리브레이션하세요."),
@@ -8794,7 +8796,8 @@ function renderVCams(){
 function addCam(dev,target,name){
   if(!/^[A-Za-z0-9._-]+$/.test(name)){ alert('이름은 영문/숫자/._- 만'); return; }
   const fps=parseInt($('fps').value)||30;
-  const spec={index_or_path:dev,width:640,height:480,fps:fps};
+  // 기본 형식 MJPG — 무압축(YUYV)은 여러 대면 USB 대역폭이 모자랍니다. 지원 안 하는 카메라는 형식을 '자동' 으로
+  const spec={index_or_path:dev,width:640,height:480,fps:fps,fourcc:'MJPG'};
   if(target==='shared'){ CFG.cameras=CFG.cameras||{}; CFG.cameras[name]=spec; }
   else{
     const a=CFG.arms.find(x=>x.side===target.slice(4));
@@ -8851,7 +8854,11 @@ function renderCurCams(){
   if(n>=2 && raw){
     const tr=document.createElement('tr'); const td=document.createElement('td'); td.colSpan=7;
     td.innerHTML='<span class="badge b-warn" style="white-space:normal">형식이 MJPG 가 아닌 카메라 '+raw+' / '+n+'대 — '
-      +'무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).</span>';
+      +'무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).</span> ';
+    td.appendChild(btn('모두 MJPG 로',()=>{
+      groups.forEach(g=>Object.values(g[0]).forEach(s=>{ s.fourcc='MJPG'; }));
+      renderCurCams(); dump(); dirty('카메라 형식 변경');
+    },'primary'));
     tr.appendChild(td); t.appendChild(tr);
   }
 }

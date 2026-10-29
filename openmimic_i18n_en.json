@@ -1583,5 +1583,7 @@
 "Hz) — 저장되는 시간이 실제보다 빨라집니다. 카메라 형식을 MJPG 로, 해상도를 낮추거나, 카메라를 다른 USB 포트(컨트롤러)로 나눠 꽂아 보세요.": "Hz) — recorded time runs faster than real time. Set the camera format to MJPG, lower the resolution, or spread the cameras over different USB ports (controllers).",
 "형식이 MJPG 가 아닌 카메라": "Cameras not in MJPG format:",
 "대 —": " —",
-"무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).": "they are uncompressed, so with several cameras USB bandwidth may run out and frames may drop or a camera may fail to open. Set the format to MJPG and save (the camera must support MJPG)."
+"무압축이라 여러 대면 USB 대역폭이 모자라 프레임이 끊기거나 열리지 않을 수 있습니다. 형식을 MJPG 로 바꾸고 저장하세요 (카메라가 MJPG 를 지원해야 함).": "they are uncompressed, so with several cameras USB bandwidth may run out and frames may drop or a camera may fail to open. Set the format to MJPG and save (the camera must support MJPG).",
+"모두 MJPG 로": "All to MJPG",
+"카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 셋업 › 카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요.": "The camera does not support that format (MJPG etc.) — set that camera format to Auto in Setup › Cameras."
 }
