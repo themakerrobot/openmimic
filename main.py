@@ -5871,6 +5871,11 @@ function openWS(){{
           warn+='<p class="badge b-warn">'+tag+'서보 상태: '+a.health.msgs.map(esc).join(' · ')+'</p>';
         if(a.power_warn&&a.power_warn.length)
           warn+='<p class="badge b-warn">'+tag+'전원 점검: '+a.power_warn.map(esc).join(' · ')+'</p>';
+        // 양팔에서 이 팔만 꺼져 있으면 (다른 팔은 켜짐) — 이 팔에는 슬라이더·리더 명령이 가지 않습니다
+        if(follow&&a.follow===false&&!a.health_stop)
+          warn+='<p class="badge b-bad" style="white-space:normal">'+tag+'리더 팔로우가 꺼져 있어 이 팔은 리더를 따라가지 않습니다 — 리더 팔로우를 껐다 다시 켜 보세요</p>';
+        else if(torque&&a.torque===false)
+          warn+='<p class="badge b-bad" style="white-space:normal">'+tag+'토크가 켜지지 않아 이 팔은 슬라이더 명령을 받지 않습니다 — 토크 OFF 후 다시 ON 해 보세요</p>';
         JOINTS.forEach(j=>{{
           if(valEls[side][j])valEls[side][j].textContent=((torque||follow)?(a.target[j]??0):(a.actual[j]??0)).toFixed(1);
           if(actEls[side][j]){{
@@ -5882,12 +5887,13 @@ function openWS(){{
             if(row) row.classList.toggle('stuck',bad);
           }}
           const s=sliders[side][j]; if(!s)return;
-          s.disabled=follow||!torque;
-          s.title=(!torque&&!follow)?'토크 ON 을 먼저 누르세요':'';
+          const armTorque=a.torque!==undefined?a.torque:torque;
+          s.disabled=follow||!armTorque;
+          s.title=(!armTorque&&!follow)?'토크 ON 을 먼저 누르세요':'';
           if(follow){{
             if(a.target[j]!==undefined)s.value=a.target[j];
           }}else{{
-            if(!torque&&a.actual[j]!==undefined)s.value=a.actual[j];
+            if(!armTorque&&a.actual[j]!==undefined)s.value=a.actual[j];
             if(torque&&d.synced&&a.actual[j]!==undefined)s.value=a.actual[j];
           }}
         }});
@@ -6034,7 +6040,8 @@ def _arms_state():
                   "track": a.track, "temp": a.temp, "hot": hot, "stuck": stuck,
                   "diag": diag, "health": a.guard.state() if a.guard else None, "health_stop": a.health_stop,
                   "power_warn": a.power_warn + LEADERS[s].power_warn if s in LEADERS else a.power_warn,
-                  "maxtemp": max(a.temp.values()) if a.temp else None}
+                  "maxtemp": max(a.temp.values()) if a.temp else None,
+                  "torque": a.torque, "follow": a.follow}
     return out
 
 
@@ -6187,14 +6194,16 @@ async def ws_control(sock: WebSocket):
         try:
             while True:
                 t0 = time.monotonic()
-                any_arm = _first_arm()
                 # 양팔이면 어느 팔에서 난 오류인지 앞에 붙입니다 (한쪽만 안 될 때 원인을 가리기 쉽게)
                 err = " / ".join((f"{a.side}: {a.err}" if BIMANUAL else a.err) for a in ARMS.values() if a.err)
                 if not err and t0 - note["t"] < NOTE_HOLD_S:
                     err = note["m"]
                 await sock.send_text(json.dumps({
                     "type": "state", "arms": _arms_state(),
-                    "torque": any_arm.torque, "follow": any_arm.follow,
+                    # 양팔에서 한 팔만 켜지는 경우가 있어(한쪽 토크 켜기 실패 등) '하나라도 켜짐' 으로 보내고,
+                    # 팔별 상태(arms[*].torque/follow)로 꺼진 팔을 따로 알립니다
+                    "torque": any(a.torque for a in ARMS.values()),
+                    "follow": any(a.follow for a in ARMS.values()),
                     "synced": synced, "err": err,
                 }))
                 synced = False
@@ -6220,10 +6229,6 @@ async def ws_control(sock: WebSocket):
         # run_in_executor 는 부르는 즉시 스레드가 시작되므로, 이 태스크가 취소돼도(서버 종료 등) 정리는 끝까지 갑니다.
         fut = asyncio.get_running_loop().run_in_executor(None, _cleanup)
         await asyncio.shield(fut)
-
-
-def _first_arm():
-    return ARMS[SIDES[0]]
 
 
 # Control 카메라 MJPEG 스트림

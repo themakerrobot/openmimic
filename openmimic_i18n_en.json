@@ -1574,5 +1574,7 @@
 "이 프로젝트의 환경은": "The environment of this project is",
 "에서 다시 열면 그 환경으로 바뀝니다.": "— open it again there to switch to that environment.",
 "사용 중인 환경이라 default(없으면 다른 환경)로 먼저 전환합니다.": "It is the active environment, so OpenMimic switches to default (or another environment) first.",
-"기록한 범위는 그대로이니 저장을 다시 누르세요. 같은 모터에서 계속 나면 그 모터 앞뒤 케이블(데이지체인)·커넥터와 보드 전원을 확인하세요": "the recorded ranges are kept, so press Save again. If it keeps failing on the same motor, check the cables (daisy chain) and connectors on both sides of that motor and the board power"
+"기록한 범위는 그대로이니 저장을 다시 누르세요. 같은 모터에서 계속 나면 그 모터 앞뒤 케이블(데이지체인)·커넥터와 보드 전원을 확인하세요": "the recorded ranges are kept, so press Save again. If it keeps failing on the same motor, check the cables (daisy chain) and connectors on both sides of that motor and the board power",
+"리더 팔로우가 꺼져 있어 이 팔은 리더를 따라가지 않습니다 — 리더 팔로우를 껐다 다시 켜 보세요": "Leader follow is off for this arm, so it does not follow its leader — turn leader follow off and on again",
+"토크가 켜지지 않아 이 팔은 슬라이더 명령을 받지 않습니다 — 토크 OFF 후 다시 ON 해 보세요": "Torque did not turn on for this arm, so it ignores the sliders — turn torque off and on again"
 }
