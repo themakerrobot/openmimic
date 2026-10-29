@@ -208,6 +208,9 @@ CLI 처럼 "중앙에 놓고 Enter" 로 잡은 자세가 실제 중앙에서 벗
 
 - `wrist_roll` 은 범위를 재지 않고 0~4095. 저장하는 순간의 자세가 0° — 리더·팔로워를 같은 방향으로 두고 저장
 - 취소하면 바뀐 EEPROM 을 이전 값으로 되돌립니다
+- 캘리브레이션 레지스터 쓰기(`reset_calibration` · `write_calibration` · `calibrate`)는 `retrying_writes` 안에서 레지스터마다 3번 더 시도합니다.
+  lerobot `bus.write` 기본은 다시 시도가 없어(`num_retry=0`), EEPROM 쓰기 직후 상태 패킷 하나가 늦으면
+  (`There is no status packet`, Windows USB 지연에서 더 잦음) 저장 전체가 멈췄습니다. 같은 값을 다시 쓰는 것이라 안전합니다.
 
 ## 캘리브레이션 파일 관리 (여러 팔 세트)
 

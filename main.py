@@ -17,6 +17,7 @@
 #   → http://<host>:8080  (기본 인증 없음. OPENMIMIC_TOKEN / OPENMIMIC_AUTH=on 으로 켤 수 있음)
 # ============================================================================
 import asyncio
+import contextlib
 import glob
 import html
 import json
@@ -1473,6 +1474,31 @@ def _write_nothrow(bus, motor, reg, value, tries=3):
     return False
 
 
+CONFIG_WRITE_RETRY = 3      # 설정 레지스터 쓰기 실패 시 더 시도할 횟수
+
+
+@contextlib.contextmanager
+def retrying_writes(bus, retry=CONFIG_WRITE_RETRY):
+    """이 안에서 bus.write 가 실패하면 retry 번 더 시도합니다 (lerobot 기본은 다시 시도 없음 — num_retry=0).
+    캘리브레이션 레지스터(Homing_Offset · Min/Max_Position_Limit)는 EEPROM 이라 쓴 직후 서보가 잠깐 응답을 못 하거나
+    USB 지연(Windows 에서 더 큼)으로 상태 패킷이 늦어 'There is no status packet' 이 한 번씩 납니다.
+    같은 값을 다시 쓰는 것이라 안전하고, 실패 하나로 저장 전체가 멈추지 않습니다.
+    write_calibration · reset_calibration · calibrate 가 어느 레지스터를 쓰는지는 lerobot 그대로 둡니다."""
+    orig = bus.write
+
+    def write(data_name, motor, value, *, normalize=True, num_retry=0):
+        return orig(data_name, motor, value, normalize=normalize, num_retry=max(num_retry, retry))
+
+    bus.write = write
+    try:
+        yield bus
+    finally:
+        try:
+            del bus.write               # 인스턴스에 붙인 것만 지우면 클래스의 원래 write 로 돌아갑니다
+        except AttributeError:
+            pass
+
+
 def torque_off_all(bus):
     """모든 모터 Torque_Enable=0 (+ Lock=0). 한 모터가 실패해도 끝까지 갑니다. 반환: 실패한 모터 목록."""
     try:
@@ -1521,7 +1547,8 @@ def connect_follower(dev):
         bus.connect()
         torque_off_all(bus)
         if dev.calibration and not bus.is_calibrated:
-            bus.write_calibration(dev.calibration)
+            with retrying_writes(bus):
+                bus.write_calibration(dev.calibration)
         pos = bus.sync_read("Present_Position", normalize=False)
         bus.sync_write("Goal_Position", pos, normalize=False)
         for cam in dev.cameras.values():
@@ -1538,7 +1565,8 @@ def connect_leader(dev):
     try:
         dev.connect(calibrate=False)
         if dev.calibration and not dev.bus.is_calibrated:
-            dev.bus.write_calibration(dev.calibration)
+            with retrying_writes(dev.bus):
+                dev.bus.write_calibration(dev.calibration)
     except Exception:
         close_arm(dev, disable_torque=False)
         raise
@@ -8936,16 +8964,18 @@ class CalibSession:
             failed = torque_off_all(dev.bus)
             if failed:
                 raise RuntimeError(f"토크 해제 실패: {', '.join(failed)} — 전원·케이블 확인")
-            for m in dev.bus.motors:
-                dev.bus.write("Operating_Mode", m, OperatingMode.POSITION.value)
-            # Homing_Offset=0, 위치 제한 전체 개방 → 이제 읽는 값이 곧 원시 엔코더값
-            dev.bus.reset_calibration()
-            self.reset_done = True
+            with retrying_writes(dev.bus):
+                for m in dev.bus.motors:
+                    dev.bus.write("Operating_Mode", m, OperatingMode.POSITION.value)
+                # Homing_Offset=0, 위치 제한 전체 개방 → 이제 읽는 값이 곧 원시 엔코더값
+                self.reset_done = True       # 일부만 쓰고 실패해도 이전 값으로 되돌리게 먼저 표시
+                dev.bus.reset_calibration()
             pos = dev.bus.sync_read("Present_Position", normalize=False)
         except Exception:
             if self.reset_done and self.old_calib:
                 try:
-                    dev.bus.write_calibration(self.old_calib)
+                    with retrying_writes(dev.bus):
+                        dev.bus.write_calibration(self.old_calib)
                 except Exception:
                     pass
             close_arm(dev)
@@ -9054,7 +9084,12 @@ class CalibSession:
             calib[m] = MotorCalibration(id=motor.id, drive_mode=0,
                                         homing_offset=off, range_min=rmin, range_max=rmax)
         with self.lock:
-            dev.bus.write_calibration(calib)     # Homing_Offset + Min/Max_Position_Limit 기록
+            try:
+                with retrying_writes(dev.bus):
+                    dev.bus.write_calibration(calib)     # Homing_Offset + Min/Max_Position_Limit 기록
+            except Exception as e:
+                raise RuntimeError(f"{e} — 기록한 범위는 그대로이니 저장을 다시 누르세요. 같은 모터에서 계속 나면 "
+                                   "그 모터 앞뒤 케이블(데이지체인)·커넥터와 보드 전원을 확인하세요") from e
             dev.calibration = calib
             dev._save_calibration()
         self.saved_path = str(dev.calibration_fpath)
@@ -9069,7 +9104,8 @@ class CalibSession:
             # reset_calibration() 이 모터 EEPROM 을 이미 바꿨으므로 이전 값을 되돌려 놓습니다
             with self.lock:
                 try:
-                    self.device.bus.write_calibration(self.old_calib)
+                    with retrying_writes(self.device.bus):
+                        self.device.bus.write_calibration(self.old_calib)
                 except Exception as e:
                     self.err = f"이전 캘리브레이션 복원 실패: {e}"
         self._close()
@@ -9290,7 +9326,8 @@ def factory_calibrate(side, role):
             raise RuntimeError(f"토크 해제 실패: {', '.join(failed)}")
         if f.exists():
             shutil.copy2(f, f.with_suffix(".json.bak"))
-        dev.calibrate()
+        with retrying_writes(dev.bus):
+            dev.calibrate()
     finally:
         close_arm(dev)
     return str(f)
