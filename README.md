@@ -7,7 +7,7 @@
 <p align="center">
   <b>로봇팔 셋업 · 데이터 수집 · 학습 · 실행을 웹 화면 하나로</b><br>
   SO-ARM101 · ROBOTIS OMX · 한팔 / 양팔 · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU<br>
-  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11
+  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11 (네이티브)
 </p>
 
 <p align="center">
@@ -46,6 +46,7 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 으로 로봇팔�
 | NVIDIA GPU PC | Ubuntu · Windows | ✅ GPU | ✅ GPU |
 | Jetson Thor | Ubuntu (JetPack) | ✅ GPU | ✅ GPU |
 
+**Ubuntu 와 Windows 를 대등하게 지원합니다.** Windows 는 WSL·가상머신 없이 네이티브로 돌고, 한팔·양팔과 셋업 → 수집 → 학습 → 실행 전 과정이 같습니다.
 같은 코드가 두 OS 에서 돌고 데이터셋·캘리브레이션·모델 파일 형식도 같아, Ubuntu 와 Windows 사이에 그대로 옮겨 씁니다.
 설치 스크립트가 기기 종류(Intel / Thor / NVIDIA)를 자동으로 고릅니다.
 
@@ -86,6 +87,7 @@ sleep 3; tail -f lerobot_conda.log        # "=== 완료 ===" 가 나오면 Ctrl+
 
 ### Windows 10 / 11
 
+WSL 없이 Windows 에서 바로 돕니다. SO-ARM101 · OMX 한팔·양팔 모두 Ubuntu 와 같게 지원합니다.
 PowerShell 에서 (git 이 없으면 먼저 `winget install --id Git.Git -e`). 관리자 권한은 필요 없습니다.
 
 ```powershell
@@ -109,7 +111,8 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" �
 - `OpenMimic.bat` 은 `openmimic.ps1` 을 부릅니다 — `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start` 와 같습니다.
 - Intel 내장 GPU(XPU)로 학습하려면 설치할 때 PyTorch XPU 판을 고릅니다 — [docs/INTEL.md](docs/INTEL.md).
   내장 GPU 는 느리므로(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초) 긴 학습은 **HF Jobs** 를 권합니다.
-- Windows 실기 확인 범위와 남은 확인 항목은 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) 에 있습니다.
+- 실기 확인: Lunar Lake 노트북(Core Ultra 200V · Arc 140V · RAM 32 GB, Windows 11)에서 SO-ARM101 양팔 · 카메라 3대로
+  설치 → 셋업 마법사 → 제어 → 수집 → XPU 학습 → OpenVINO 변환 → **NPU 실행**까지. 자세한 내용과 남은 확인 항목은 [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md)
 
 ### 공통
 
@@ -223,6 +226,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" �
 | **SmolVLA** | 태스크 설명(언어)을 쓰는 450M 사전학습 모델 미세조정 (GPU 권장) |
 
 - 데이터셋·정책 조합이 안 맞으면 **시작 전에** 빨간 표시로 알려 줍니다 (카메라 해상도, 한팔/양팔 등)
+- 에피소드 10개 · 수천 step 은 흐름 확인용입니다. 실제로 집게 하려면 데모 **50개 안팎**과 충분한 step(수만)이 필요합니다 — 내장 GPU 에선 오래 걸리니 HF Jobs 를 권합니다
 - **실행 위치**에서 **HF Jobs** 를 고르면 Hugging Face 클라우드 GPU 로 학습합니다 (유료, 시간당 요금이 목록에 보임)
 - 정책별 자세한 내용은 **[docs/POLICIES.md](docs/POLICIES.md)**
 

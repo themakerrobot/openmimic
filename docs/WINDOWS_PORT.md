@@ -8,10 +8,12 @@
 **요약**
 
 - Ubuntu 는 가상 장치 전 구성 회귀 시험을 통과했습니다. 변경 전 코드로 같은 시험을 돌려 결과를 비교했습니다.
-- Windows 는 **실기로 공식 지원**합니다. Core Ultra 200V(Arc 140V) 노트북 · `win-intel` + XPU · SO-ARM101 양팔 · USB 카메라 3대로
-  설치 → 실행(`OpenMimic.bat`) → 셋업 마법사(포트·진단·캘리브레이션·확인) → 제어 → 수집 → XPU 학습 → OpenVINO 변환까지 확인했습니다.
-  실기에서 나온 문제와 고친 방법은 3-1 절에 있습니다.
-- 아직 실기로 못 본 것: NPU 실행(롤아웃), Windows + NVIDIA(`win-cuda`), OMX, 재부팅 뒤 카메라·보드 식별 유지, 자동 시작, 작업 중지 신호 — 6절 표와 4절 목록.
+- Windows 는 **네이티브(WSL 없이)로 Ubuntu 와 대등하게 공식 지원**합니다 — 한팔·양팔, 셋업부터 실행까지 같은 코드입니다.
+  Lunar Lake 노트북(Core Ultra 200V · Arc 140V · RAM 32 GB) · `win-intel` + XPU · SO-ARM101 양팔 · USB 카메라 3대로
+  설치 → 실행(`OpenMimic.bat`) → 셋업 마법사(포트·진단·캘리브레이션·확인) → 제어 → 수집 → XPU 학습 → OpenVINO 변환 → NPU 실행까지 확인했습니다.
+  (에피소드 10개 · 5000 step 모델이라 집기는 실패 — 흐름 확인용 학습량입니다.) 실기에서 나온 문제와 고친 방법은 3-1 절에 있습니다.
+- 아직 실기로 못 본 것: Windows + NVIDIA(`win-cuda`), OMX, 한팔 구성, 재부팅 뒤 카메라·보드 식별 유지, 자동 시작, 작업 중지 신호 — 6절 표와 4절 목록.
+  한팔은 양팔과 같은 코드 경로(팔 하나)라 따로 바뀌는 OS 처리는 없습니다.
 - 확신 없는 Windows 동작은 코드에 `TODO(win-verify)` 로 남겼습니다 (아래 목록).
 
 ## 1. 바뀐 파일과 이유
@@ -160,7 +162,6 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | `openmimic_platform.py` `stdin_line_ready` | Windows 콘솔에서 msvcrt 로 Enter 감지 (`tools_armcheck --sweep`) |
 | `openmimic_platform.py` `replace_file` · `read_text` | 2 초 다시 시도로 충분한지 (Defender 검사가 더 길면 저장 실패가 남음) |
 | `install.ps1` 사용자 폴더 | 한글 등 영문이 아닌 사용자 폴더에서 miniforge·pip 가 동작하는지 |
-| `install.ps1` OpenVINO | `CPU GPU NPU` 인식과 `openmimic_ov` 변환은 실기 확인. **NPU 실행(롤아웃)** 은 아직 |
 | `openmimic.ps1` autostart | 시작프로그램 바로 가기로 로그인 때 켜지는지 |
 
 ## 5. 단계 5 — lerobot Windows 호환 확인 결과
@@ -219,7 +220,7 @@ lerobot `e40b58a`, torch 2.11, mujoco 3.17 을 썼고 MuJoCo 렌더는 OSMesa �
 | 3 | 카메라 등록 → 재부팅 → 같은 장치 | **등록·수집은 통과** (DirectShow 경로, 3대, MJPG). 재부팅 뒤 같은 장치로 잡히는지는 아직 |
 | 4 | 가상 장치 + MuJoCo(wgl) | **못 함**. 가상 시리얼(소켓)은 OS 기능을 쓰지 않아 Linux 와 같은 코드입니다. `wgl` 렌더는 미확인 |
 | 5 | Ubuntu 데이터셋·캘리브레이션 zip·모델을 Windows 로 가져와 학습·실행 | **못 함**. 포맷은 바꾸지 않았습니다 |
-| 6 | Core Ultra: XPU 학습 → OpenVINO 변환 → NPU 실행 | **XPU 학습·변환 통과** (ACT 5000 step, 스텝당 약 2.3초; 학습 끝의 `checkpoints/last` 링크 권한 오류는 3-1절에서 고침). NPU 실행은 아직 |
+| 6 | Core Ultra: XPU 학습 → OpenVINO 변환 → NPU 실행 | **통과** (ACT 5000 step, 스텝당 약 2.3초 → OpenVINO 변환 → NPU 로 양팔 실행; 학습 끝의 `checkpoints/last` 링크 권한 오류는 3-1절에서 고침). 에피소드 10개 · 5000 step 이라 집기는 실패 — 학습량 문제 |
 | 7 | 작업 중지·강제 중지 | **못 함**. 코드는 CTRL_BREAK(정상) / `taskkill /T /F`(강제), 처리기는 SIGINT·SIGTERM·SIGBREAK |
 
 Windows 실기 시험은 위 7개 항목과 4절 목록을 같이 확인하면 됩니다.

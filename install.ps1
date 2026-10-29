@@ -267,7 +267,7 @@ if ($Platform -eq 'win-intel') {
     Log "4-5. OpenVINO / NNCF (Intel NPU·GPU·CPU 추론)"
     if ((Pip @('install', 'openvino>=2025.4', 'nncf>=2.19')) -ne 0) { Die "openvino 설치 실패" }
 
-    # Core Ultra Windows 에서 OpenVINO 가 NPU 를 잡고 openmimic_ov 변환이 되는 것은 실기로 확인 — TODO(win-verify): NPU 실행(롤아웃)
+    # Core Ultra Windows 에서 OpenVINO 가 NPU 를 잡고 openmimic_ov 변환·NPU 실행(롤아웃)까지 되는 것을 실기로 확인했습니다
     Log "4-6. Intel NPU / GPU 점검 (드라이버는 설치하지 않습니다 — 안내만)"
     $cpu = (Get-CimInstance Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1).Name
     Write-Log "CPU : $cpu"

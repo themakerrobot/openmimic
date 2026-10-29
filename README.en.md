@@ -7,7 +7,7 @@
 <p align="center">
   <b>Robot arm setup · data collection · training · rollout in one web screen</b><br>
   SO-ARM101 · ROBOTIS OMX · single / bimanual · Intel Core Ultra NPU · Jetson Thor · NVIDIA GPU<br>
-  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11
+  Ubuntu 22.04 · 24.04 · 26.04 · Windows 10 · 11 (native)
 </p>
 
 <p align="center">
@@ -48,6 +48,7 @@ The screen switches between Korean and English with the **한/EN** button in the
 | NVIDIA GPU PC | Ubuntu · Windows | ✅ GPU | ✅ GPU |
 | Jetson Thor | Ubuntu (JetPack) | ✅ GPU | ✅ GPU |
 
+**Ubuntu and Windows are supported on equal terms.** Windows runs natively, without WSL or a virtual machine, with the same single/bimanual support and the same setup → collect → train → rollout flow.
 The same code runs on both operating systems and the dataset, calibration and model file formats are the same, so files move between Ubuntu and Windows as they are.
 The install script picks the device type (Intel / Thor / NVIDIA) automatically.
 
@@ -88,6 +89,7 @@ When the install finishes, **log out and log back in once** (serial and camera p
 
 ### Windows 10 / 11
 
+It runs natively on Windows, without WSL. SO-ARM101 and OMX, single and bimanual, are supported the same as on Ubuntu.
 In PowerShell (if git is missing, first `winget install --id Git.Git -e`). No administrator rights are needed.
 
 ```powershell
@@ -111,7 +113,8 @@ To keep it on the desktop, create a **shortcut** instead of moving the file. If 
 - `OpenMimic.bat` calls `openmimic.ps1` — the same as `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start`.
 - To train on the Intel integrated GPU (XPU), choose the PyTorch XPU build when installing — [docs/INTEL.md](docs/INTEL.md).
   The integrated GPU is slow (about 2.3 s per step on an Arc 140V · ACT · 3 cameras · batch 8), so **HF Jobs** is recommended for long training.
-- What has been checked on real Windows hardware and what is still open: [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) (Korean).
+- Checked on real hardware: a Lunar Lake laptop (Core Ultra 200V · Arc 140V · 32 GB RAM, Windows 11) with bimanual SO-ARM101 and 3 cameras —
+  install → setup wizard → control → collect → XPU training → OpenVINO conversion → **NPU rollout**. Details and remaining checks: [docs/WINDOWS_PORT.md](docs/WINDOWS_PORT.md) (Korean)
 
 ### Both
 
@@ -225,6 +228,7 @@ Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate g
 | **SmolVLA** | Fine-tunes a 450M pretrained model that uses the task description (language) (GPU recommended) |
 
 - A dataset/policy mismatch is flagged in red **before starting** (camera resolution, single/bimanual, etc.)
+- 10 episodes and a few thousand steps only check the workflow. For the arm to actually grasp, you need **about 50 demos** and enough steps (tens of thousands) — that takes long on an integrated GPU, so HF Jobs is recommended
 - Choose **HF Jobs** under **Run on** to train on Hugging Face cloud GPUs (paid; the hourly price is shown in the list)
 - Details per policy: **[docs/POLICIES.md](docs/POLICIES.md)** (Korean)
 
