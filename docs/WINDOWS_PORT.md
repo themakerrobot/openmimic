@@ -11,7 +11,9 @@
 - Windows 는 **네이티브(WSL 없이)로 Ubuntu 와 대등하게 공식 지원**합니다 — 한팔·양팔, 셋업부터 실행까지 같은 코드입니다.
   Lunar Lake 노트북(Core Ultra 200V · Arc 140V · RAM 32 GB) · `win-intel` + XPU · SO-ARM101 양팔 · USB 카메라 3대로
   설치 → 실행(`OpenMimic.bat`) → 셋업 마법사(포트·진단·캘리브레이션·확인) → 제어 → 수집 → XPU 학습 → OpenVINO 변환 → NPU 실행까지 확인했습니다.
-  (에피소드 10개 · 5000 step 모델이라 집기는 실패 — 흐름 확인용 학습량입니다.) 실기에서 나온 문제와 고친 방법은 3-1 절에 있습니다.
+  집기 동작 자체는 아직 성공하지 못했는데, 기능 문제가 아니라 기기 제약입니다 — 내장 GPU 학습이 스텝당 약 2.3초라
+  에피소드 10개 · 5000 step(3시간 15분)까지만 학습했고, 이는 집기에 필요한 데이터·학습량(데모 50개 안팎 · 수만 step)에 못 미칩니다.
+  본 학습은 NVIDIA GPU 나 HF Jobs 로 하고 실행만 이 기기 NPU 에서 하는 구성을 권합니다. 실기에서 나온 문제와 고친 방법은 3-1 절에 있습니다.
 - 아직 실기로 못 본 것: Windows + NVIDIA(`win-cuda`), OMX, 한팔 구성, 재부팅 뒤 카메라·보드 식별 유지, 자동 시작, 작업 중지 신호 — 6절 표와 4절 목록.
   한팔은 양팔과 같은 코드 경로(팔 하나)라 따로 바뀌는 OS 처리는 없습니다.
 - 확신 없는 Windows 동작은 코드에 `TODO(win-verify)` 로 남겼습니다 (아래 목록).
@@ -220,7 +222,7 @@ lerobot `e40b58a`, torch 2.11, mujoco 3.17 을 썼고 MuJoCo 렌더는 OSMesa �
 | 3 | 카메라 등록 → 재부팅 → 같은 장치 | **등록·수집은 통과** (DirectShow 경로, 3대, MJPG). 재부팅 뒤 같은 장치로 잡히는지는 아직 |
 | 4 | 가상 장치 + MuJoCo(wgl) | **못 함**. 가상 시리얼(소켓)은 OS 기능을 쓰지 않아 Linux 와 같은 코드입니다. `wgl` 렌더는 미확인 |
 | 5 | Ubuntu 데이터셋·캘리브레이션 zip·모델을 Windows 로 가져와 학습·실행 | **못 함**. 포맷은 바꾸지 않았습니다 |
-| 6 | Core Ultra: XPU 학습 → OpenVINO 변환 → NPU 실행 | **통과** (ACT 5000 step, 스텝당 약 2.3초 → OpenVINO 변환 → NPU 로 양팔 실행; 학습 끝의 `checkpoints/last` 링크 권한 오류는 3-1절에서 고침). 에피소드 10개 · 5000 step 이라 집기는 실패 — 학습량 문제 |
+| 6 | Core Ultra: XPU 학습 → OpenVINO 변환 → NPU 실행 | **통과** (ACT 5000 step, 스텝당 약 2.3초 → OpenVINO 변환 → NPU 로 양팔 실행; 학습 끝의 `checkpoints/last` 링크 권한 오류는 3-1절에서 고침). 집기는 미성공 — 내장 GPU 속도 때문에 10 에피소드 · 5000 step 까지만 학습한 학습량 부족 (기능 문제 아님) |
 | 7 | 작업 중지·강제 중지 | **못 함**. 코드는 CTRL_BREAK(정상) / `taskkill /T /F`(강제), 처리기는 SIGINT·SIGTERM·SIGBREAK |
 
 Windows 실기 시험은 위 7개 항목과 4절 목록을 같이 확인하면 됩니다.
