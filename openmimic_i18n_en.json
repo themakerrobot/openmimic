@@ -1541,5 +1541,14 @@
 "NPU 는 장치 관리자의 신경 프로세서(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버를 확인하세요": "For NPU check the neural processor (Intel AI Boost) driver in Device Manager; for GPU check the Intel graphics driver",
 "잠시 후 다시 연결합니다…": "Reconnecting in a moment…",
 "지우지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요": "Could not delete — close any screen showing this dataset (video) and try again",
-"이름을 바꾸지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요": "Could not rename — close any screen showing this dataset (video) and try again"
+"이름을 바꾸지 못했습니다 — 이 데이터셋을 보는 화면(영상)을 닫고 다시 하세요": "Could not rename — close any screen showing this dataset (video) and try again",
+"폴더·캘리브 id 가 잘못됐습니다": "Invalid folder or calibration id",
+"끝난 뒤 지우세요": "delete after it finishes",
+"그 파일이 없습니다 — 목록을 새로고침하세요": "That file does not exist — reload the list",
+"지우지 못했습니다": "Could not delete",
+"지금 셋업에서 쓰는 파일입니다 — 지우면 이 팔은 다시 캘리브레이션해야 연결됩니다.": "This file is used by the current setup — after deleting it, this arm must be calibrated again before it can connect.",
+"캘리브레이션 파일을 지울까요?": "Delete this calibration file?",
+"(같은 폴더에 .json.bak 으로 남겨 둡니다)": "(A copy is kept as .json.bak in the same folder)",
+"지우기 실패": "Delete failed",
+"가상 장치가 예전 판으로 켜져 있습니다 — 가상 장치를 껐다 다시 켜세요": "The virtual device is running an older version — turn it off and on again"
 }

@@ -140,7 +140,7 @@ Changes take effect after **Save settings**.
 ### Calibration
 
 Use it to calibrate on its own and to **manage calibration files**. ⚠️ Torque turns off when it starts — support the follower.
-**Calibration files** below lists every arm file on this PC, with zip **Export / Import**.
+**Calibration files** below lists every arm file on this PC, with zip **Export / Import**. Remove unused files with **Delete** (a copy is kept as `.json.bak` in the same folder).
 
 ![Calibration](docs/img/calib.png)
 

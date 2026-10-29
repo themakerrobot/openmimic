@@ -9364,6 +9364,27 @@ def api_calib_files():
     return {"files": calib_files(), "root": str(CALIB_ROOT)}
 
 
+@app.post("/api/calib/delete")
+async def api_calib_delete(req: Request):
+    """캘리브레이션 파일 하나를 지웁니다. 실수로 지워도 되돌릴 수 있게 같은 폴더에 .json.bak 으로 옮깁니다
+    (목록·lerobot 은 *.json 만 보므로 지운 것과 같습니다)."""
+    b = await req.json()
+    d, cid = b.get("dir") or "", b.get("id") or ""
+    if d not in CALIB_DIRS or not safe_name(cid):
+        return JSONResponse({"error": "폴더·캘리브 id 가 잘못됐습니다"}, status_code=400)
+    busy = exclusive_busy()
+    if busy:
+        return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 지우세요"}, status_code=400)
+    f = CALIB_ROOT / d / f"{cid}.json"
+    if not f.is_file():
+        return JSONResponse({"error": "그 파일이 없습니다 — 목록을 새로고침하세요"}, status_code=400)
+    try:
+        P.replace_file(f, f.with_suffix(".json.bak"))
+    except OSError as e:
+        return JSONResponse({"error": f"지우지 못했습니다: {e}"}, status_code=400)
+    return {"ok": True, "backup": f"{d}/{cid}.json.bak"}
+
+
 @app.get("/api/calib/export")
 def api_calib_export():
     """모든 캘리브레이션 파일을 zip 하나로 — 안의 경로는 calibration/ 아래 상대경로 그대로."""
@@ -9562,9 +9583,20 @@ async function loadCalibFiles(){
   const fs=d.files||[];
   if(!fs.length){ $('cfiles').textContent='캘리브레이션 파일이 아직 없습니다.'; return; }
   let h='<table><tr><th>폴더</th><th>캘리브 id</th><th>수정</th><th></th></tr>';
-  fs.forEach(f=>{ h+='<tr><td class=mono>'+E(f.dir)+'</td><td class=mono>'+E(f.id)+'</td><td class=mono>'+E(f.mtime)+'</td><td>'
-    +(f.using?'<span class="badge b-ok">지금 셋업에서 사용</span>':'')+'</td></tr>'; });
+  fs.forEach((f,i)=>{ h+='<tr><td class=mono>'+E(f.dir)+'</td><td class=mono>'+E(f.id)+'</td><td class=mono>'+E(f.mtime)+'</td><td>'
+    +(f.using?'<span class="badge b-ok">지금 셋업에서 사용</span> ':'')
+    +'<button type=button class=calrm data-i='+i+'>삭제</button></td></tr>'; });
   $('cfiles').innerHTML=h+'</table>';
+  document.querySelectorAll('#cfiles .calrm').forEach(b=>b.onclick=()=>delCalib(fs[+b.dataset.i]));
+}
+async function delCalib(f){
+  const name=f.dir+'/'+f.id+'.json';
+  const warn=f.using?'\\n\\n지금 셋업에서 쓰는 파일입니다 — 지우면 이 팔은 다시 캘리브레이션해야 연결됩니다.':'';
+  if(!confirm('캘리브레이션 파일을 지울까요?\\n  '+name+warn+'\\n\\n(같은 폴더에 .json.bak 으로 남겨 둡니다)')) return;
+  let d;
+  try{ d=await jpost('/api/calib/delete',{dir:f.dir,id:f.id}); }catch(e){ alert('지우기 실패: '+e); return; }
+  if(d.error){ alert(d.error); return; }
+  loadCalibFiles(); refresh();
 }
 async function importCalib(overwrite){
   const f=$('calf').files[0];
