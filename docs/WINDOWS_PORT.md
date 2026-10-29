@@ -136,7 +136,7 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
 | 위치 | 확인할 것 |
 |---|---|
 | `openmimic_platform.py` `_win_break` | 콘솔 없는 도우미가 작업 콘솔에 붙어 CTRL_BREAK 를 전달하는지 (특히 `openmimic.ps1 restart` 뒤 '중지') |
-| `openmimic.ps1` start | Windows 11 에서 기본 터미널이 Windows Terminal 일 때 숨긴 cmd 창이 보이는 창으로 바뀌지 않는지 (보이는 창을 닫으면 서버·작업이 같이 꺼짐) |
+| `openmimic.ps1` background | Windows 11 에서 기본 터미널이 Windows Terminal 일 때 숨긴 cmd 창이 보이는 창으로 바뀌지 않는지 (보이는 창을 닫으면 서버·작업이 같이 꺼짐) |
 | `openmimic_platform.py` `_win_port_entry` | SO-ARM101 보드(CH343 `1a86:55d3`)에서 pyserial 이 시리얼 번호·USB 위치를 채우는지 |
 | `openmimic_platform.py` `_win_cameras` | DirectShow 나열 순서가 OpenCV `CAP_DSHOW` 인덱스와 같은지. 장치 경로가 재부팅 뒤에도 같은지 (같은 모델 2대) |
 | `openmimic_platform.py` `_dshow_from_ffmpeg` | ffmpeg 목록에서 빠지는 장치('(none)' 가상 카메라 등)가 있을 때 인덱스가 어긋나는지 |

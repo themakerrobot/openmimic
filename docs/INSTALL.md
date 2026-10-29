@@ -78,10 +78,12 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
 | 환경 켜기 | `. .\activate.ps1` (점 + 공백). 실행 정책이 막으면 `powershell -ExecutionPolicy Bypass -NoExit -Command ". .\activate.ps1"` |
 
 ```powershell
-.\openmimic.ps1 start          # 창 없이 켜기 — 로그 openmimic.log, pid openmimic_server.pid, 접속 주소 출력
-.\openmimic.ps1 stop           # 끄기 — 서버만 끄고 작업은 계속
-.\openmimic.ps1 restart · status · log · update
-.\openmimic.ps1 autostart on   # 로그인 때 켜기 (시작프로그램 폴더에 바로 가기 — 관리자 권한 필요 없음, 배터리일 때도 켜짐)
+.\openmimic.ps1 start          # 이 창에서 켜기 — 접속 주소 출력, 로그가 창에 보임, Ctrl+C 로 끔 (작업은 계속, 창을 닫으면 작업도 꺼짐)
+.\openmimic.ps1 background     # 창 없이 켜기 — 로그 openmimic.log, pid openmimic_server.pid
+.\openmimic.ps1 stop           # 끄기 (다른 창·백그라운드로 켠 것도) — 서버만 끄고 작업은 계속
+.\openmimic.ps1 restart · update   # 끄고 이 창에서 다시 켜기 (update 는 git pull 먼저)
+.\openmimic.ps1 status · log   # 상태 · 백그라운드 로그 보기
+.\openmimic.ps1 autostart on   # 로그인 때 최소화된 창에서 켜기 (시작프로그램 폴더 바로 가기 — 관리자 권한 필요 없음)
 ```
 
 실행 정책 때문에 막히면 앞에 `powershell -ExecutionPolicy Bypass -File` 을 붙입니다.

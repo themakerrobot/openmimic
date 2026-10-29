@@ -83,7 +83,9 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # until "=== 완료 
 powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start
 ```
 
-`openmimic.ps1` takes the same commands as `openmimic.sh` (`start · stop · restart · status · log · update · autostart on|off`).
+`openmimic.ps1 start` runs OpenMimic **in that window** — the log shows there and Ctrl+C stops it (jobs such as collection and training keep running; closing the window stops them too).
+Use `background` to run without a window. Other commands are the same as `openmimic.sh` (`stop · restart · status · log · update · autostart on|off`).
+In a cmd window `pwsh` may not exist; use `powershell` as above.
 If a Windows Firewall prompt appears the first time, choose **Allow** so other PCs and tablets can connect.
 
 - The device type (Intel / Thor / NVIDIA) is detected automatically. Ubuntu 22.04 · 24.04 · 26.04, Windows 10 · 11
