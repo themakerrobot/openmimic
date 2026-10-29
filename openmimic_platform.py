@@ -57,6 +57,18 @@ def child_env_extra() -> dict:
 
 
 # ============================================================================ 공유 폴더
+def avoid_spawn_pools() -> None:
+    """Windows: 이 프로세스의 ProcessPoolExecutor 를 ThreadPoolExecutor 로 바꿉니다 (수집 worker 에서만 부름).
+    lerobot 은 에피소드를 저장할 때마다 카메라 수만큼 ProcessPoolExecutor 로 영상을 인코딩합니다. Windows 는 fork 가 없어(spawn)
+    작업자마다 새 파이썬이 main.py · torch · lerobot 을 처음부터 다시 import 해 에피소드마다 수십 초가 더 걸립니다.
+    인코딩(PyAV/FFmpeg)과 PNG 읽기는 GIL 을 풀고 돌아서 스레드로도 카메라별로 나란히 돕니다.
+    Linux 는 그대로 둡니다 (fork 라 싸고, 지금까지와 같은 동작)."""
+    if not IS_WIN:
+        return
+    import concurrent.futures as cf
+    cf.ProcessPoolExecutor = cf.ThreadPoolExecutor
+
+
 def shm_dir(name: str, fallback: Path) -> Path:
     """초당 여러 번 쓰는 작은 파일용 폴더. Linux 는 tmpfs(/dev/shm) 가 있으면 그것, 아니면 fallback."""
     if not IS_WIN and Path("/dev/shm").is_dir():

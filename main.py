@@ -9792,6 +9792,7 @@ class _Preview:
 
 def worker_record(jid):
     import logging
+    P.avoid_spawn_pools()        # Windows: 에피소드 저장 때 영상 인코딩용 프로세스를 새로 띄우지 않게 (저장이 수십 초 느려짐)
     j = load_json(JOB_DIR / f"{jid}.json", {})
     spec = j.get("spec") or {}
     rd = run_dir(jid)
@@ -10003,9 +10004,12 @@ def worker_record(jid):
                     last = "빈 에피소드 — 저장 안 함"
                     continue
                 put(phase="saving", t0=None)
+                ts = time.monotonic()
                 dataset.save_episode()
+                dt = time.monotonic() - ts
+                logging.info(f"episode {dataset.num_episodes - 1} 저장 {dt:.1f}s (영상 인코딩 포함)")
                 recorded += 1
-                last = f"episode {dataset.num_episodes - 1} 저장"
+                last = f"episode {dataset.num_episodes - 1} 저장 ({dt:.0f}초)"
                 put(recorded=recorded)
     except Exception as e:
         logging.exception("record worker failed")

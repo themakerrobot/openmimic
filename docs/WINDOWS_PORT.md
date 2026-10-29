@@ -86,6 +86,14 @@ MuJoCo 자동 녹화 시험 3회 중 1회(서버를 막 켠 첫 회)에 같은 �
   읽기도 `P.read_text` 로 잠깐 다시 시도합니다 — 읽기 실패를 '파일 없음' 으로 보고 기본값을 저장하면 설정이 지워지기 때문입니다.
   `os.replace` 를 쓰던 곳은 모두 바꿨습니다 (설정·환경·캘리브레이션 파일, 수집·롤아웃 상태와 미리보기, 가상 장치 상태, OpenVINO 메타, 전원 기록).
 
+**에피소드 하나 저장이 1분을 넘음 (카메라 3대).**
+
+- 원인: lerobot 은 저장 때마다 카메라 수만큼 `ProcessPoolExecutor` 로 영상을 인코딩합니다. Windows 는 fork 가 없어(spawn)
+  작업자마다 새 파이썬이 `main.py`·torch·lerobot 을 처음부터 import 합니다 — 에피소드마다 이 비용을 다시 냅니다.
+- 고친 방법: 수집 worker 에서 `P.avoid_spawn_pools()` 가 `ProcessPoolExecutor` 를 `ThreadPoolExecutor` 로 바꿉니다 (Windows 만).
+  인코딩·PNG 읽기는 GIL 을 풀어 스레드로도 나란히 돕니다. 시험(Linux, 카메라 3대 · 300 프레임): spawn 11.7 초 → 스레드 5.4 초, 영상 프레임 수 같음.
+- 저장에 걸린 시간을 수집 화면 '직전' 칸과 작업 로그에 남깁니다. Windows 실측은 아직입니다.
+
 ## 3-2. 전체 재검토에서 고친 것 (Windows)
 
 코드 전체를 Windows 기준으로 다시 읽어 실제로 문제가 되는 곳만 고쳤습니다.

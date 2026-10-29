@@ -172,6 +172,10 @@ Windows 에서 따로 챙긴 것:
   - 설정 등 바꿔치기는 `P.replace_file`, 읽기는 `P.read_text` 로 잠깐 다시 시도합니다.
   - 명령 파일은 `P.take_file`(이름 바꾸고 읽기)로 가져옵니다.
   - 데이터셋 이름 바꾸기·지우기는 `P.move_dir`·`P.remove_dir`(열린 파일이 있으면 통째로 실패)입니다.
+- **에피소드 저장(영상 인코딩)**: lerobot 은 저장 때마다 카메라 수만큼 `ProcessPoolExecutor` 로 인코딩합니다. Windows 는 spawn 이라
+  작업자마다 새 파이썬이 `main.py`·torch·lerobot 을 다시 import 합니다(Linux 시험에서도 작업자당 약 3.7 초, Windows 는 실시간 검사까지 더해 더 김).
+  수집 worker 는 `P.avoid_spawn_pools()` 로 이 프로세스의 `ProcessPoolExecutor` 를 `ThreadPoolExecutor` 로 바꿉니다 — PyAV 인코딩·PNG 읽기는 GIL 을 풀어
+  스레드로도 카메라별로 나란히 돕니다. 640×480 카메라 3대 · 300 프레임 시험: fork 7.4 초, spawn 11.7 초, 스레드 5.4 초 (4코어 Linux). 저장 시간은 수집 화면 '직전' 에 보입니다.
 - **이름**: Windows 가 못 쓰는 이름(끝의 `.`, `con`·`nul`·`com1` 등)은 `safe_name` 이 `P.name_ok` 로 막습니다.
 
 ## 셋업 마법사 내부
