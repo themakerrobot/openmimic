@@ -2563,6 +2563,27 @@ def gpu_or_loop_busy():
     return busy_with(("record", "rollout", "train"))
 
 
+def busy_warn_html(busy, what):
+    """'실행 중이라 못 함' 배지. 끝내는 방법을 함께 적고, 풀리면 페이지를 다시 불러 바로 시작할 수 있게 합니다."""
+    if not busy:
+        return ""
+    how = ""
+    if busy.get("kind") == "control":
+        how = (" 제어 탭을 닫거나 다른 탭으로 옮기면 토크를 끄고 연결을 풉니다 (팔이 떨어지지 않게 받쳐 두세요). "
+               "다른 기기·브라우저에 제어 탭이 열려 있으면 거기서 닫으세요.")
+    elif busy.get("kind") in ("record", "rollout", "train"):
+        how = ' <a href="/jobs">작업</a> 탭에서 중지할 수 있습니다.'
+    return (f'<p class="badge b-warn" style="white-space:normal">실행 중: {esc(busy["id"])} — 끝나야 {what} 수 있습니다.{how}</p>'
+            '<script>(function(){const t=setInterval(async()=>{try{const r=await (await fetch("/api/busy",{cache:"no-store"})).json();'
+            'if(!r.busy){clearInterval(t);location.reload();}}catch(e){}},2000);})();</script>')
+
+
+@app.get("/api/busy")
+def api_busy():
+    b = exclusive_busy()
+    return {"busy": b["id"] if b else ""}
+
+
 def exclusive_busy():
     if ports_held() or CTL_OWNER is not None:     # 연결 중(약 1초)도 점유로 봅니다
         return {"id": "manual-control (제어 탭)", "kind": "control", "alive": True}
@@ -3532,8 +3553,7 @@ def collect_page(resume: str = ""):
     if rec:
         return (CSS + nav_html("co") + f"<script>const JID={js(rec['id'])};</script>" + COLLECT_RUN_HTML)
     busy = exclusive_busy()
-    busywarn = (f'<p class="badge b-warn">실행 중: {esc(busy["id"])} — 끝나야 수집을 시작할 수 있습니다</p>'
-                if busy else "") + setup_needed_html()
+    busywarn = busy_warn_html(busy, "수집을 시작할") + setup_needed_html()
     pname, pr = active_project()
     mine = set(pr["datasets"]) if pr else set()
     dsets = sorted(list_datasets(), key=lambda d: (d["name"] not in mine, d["name"]))
@@ -5468,8 +5488,7 @@ def rollout_page(job: str = "", ckpt: str = ""):
         if j.get("kind") == "rollout":
             return rollout_run_page(j)
     busy = exclusive_busy()
-    busywarn = (f'<p class="badge b-warn">실행 중: {esc(busy["id"])} — 끝나야 추론을 시작할 수 있습니다</p>'
-                if busy else "") + setup_needed_html()
+    busywarn = busy_warn_html(busy, "추론을 시작할") + setup_needed_html()
     pname, pr = active_project()
     mine = set(pr["models"]) if pr else set()
     ckpts = sorted(list_checkpoints(), key=lambda c: c.split("/checkpoints/")[0] not in mine)   # 안정 정렬
