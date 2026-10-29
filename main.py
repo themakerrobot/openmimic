@@ -5895,6 +5895,8 @@ function openWS(){{
       }});
       if(!torque&&!follow) warn='<p class=muted style="margin:0 0 8px">토크가 꺼져 있습니다. 슬라이더로 움직이려면 <b>토크 ON</b>, '
         +'리더를 따라 움직이려면 <b>리더 팔로우 ON</b>을 누르세요. 지금은 손으로 움직이면 값·3D 가 따라옵니다.</p>'+warn;
+      // 오류 문구를 그대로 보여 줍니다 (양팔이면 'right: …' 처럼 어느 팔인지 붙어 옵니다)
+      if(d.err) warn='<p class="badge b-bad" style="white-space:normal">오류 — '+esc(d.err)+'</p>'+warn;
       document.getElementById('warnbox').innerHTML=warn;
       if(d.err){{ if(cst.textContent!=='bus error') setStatus('bus error','b-bad'); }}
       else if(cst.textContent==='bus error') setStatus('연결됨','b-ok');     // 오류가 풀리면 배지도 되돌림
