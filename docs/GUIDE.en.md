@@ -212,6 +212,7 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | Arms or cameras swap after a reboot (Windows) | Boards and cameras without a serial number follow the **USB socket** they are plugged into — always use the same socket. If cameras only show up by number, `pip install pygrabber` |
 | "No calibration file" | Setup wizard step ③ or the Calibration tab. For a file from another PC, Calibration → Import |
 | No 3D view | 3D is loaded from the internet (CDN). Without internet only the 3D box is missing; the rest works |
+| Training without internet | ACT downloads the ResNet18 ImageNet weights (about 45 MB) the first time. Offline, turn on **No ImageNet backbone (offline)** on the training screen |
 | Several cameras drop out | Setup → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
 | "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs |
 | Dataset shows "not finalized" | **Repair** in the dataset list |

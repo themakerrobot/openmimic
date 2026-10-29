@@ -7,7 +7,7 @@
 <p align="center">
   <b>Robot arm imitation learning, in one browser tab.</b><br>
   From setup to data collection · training · NPU rollout — no commands<br>
-  One laptop without a GPU — <b>train on a cloud GPU, run on-device on the NPU</b>
+  <b>On-device by default</b> — pick a cloud GPU only when training is too heavy
 </p>
 
 <p align="center">
@@ -33,13 +33,14 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
 ## What makes it different
 
 - **Zero commands** — finding ports, motor diagnosis, calibration, recording, training and rollout all happen on screen. The setup wizard guides you step by step.
-- **On-device rollout** — trained models are converted to OpenVINO **FP16 · INT8** and run on the Intel Core Ultra **NPU** of the laptop next to the robot, with no cloud.
+- **On-device by default** — setup · collect · training · rollout all run on one PC next to the robot, and the data stays there. After installation it works without internet (except the 3D view — see the [user guide](docs/GUIDE.en.md#troubleshooting)).
+- **NPU rollout** — trained models are converted to OpenVINO **FP16 · INT8** and run on the Intel Core Ultra **NPU**.
   The conversion measures error against PyTorch and inference time on each device.
-- **Train without a GPU** — rent a Hugging Face cloud GPU (HF Jobs) by the hour only when you need it and start training with one click
-  (from $0.40/h for a T4; prices are shown on the training screen). Download the trained model and run it on the NPU right away.
+- **Cloud GPU when you need it** — if training takes too long on your PC, rent a Hugging Face cloud GPU (HF Jobs) by the hour just for that and start it with one click
+  (from $0.40/h for a T4; prices are shown on the training screen). Only then is the dataset uploaded to a private repo in your Hugging Face account; download the finished model and run it on the NPU.
 - **Ubuntu and Windows on equal terms** — Windows runs natively, without WSL. Datasets, calibration and models move between the two as they are.
 - **Single or bimanual** — SO-ARM101 and ROBOTIS OMX, one arm or two. Switching is one button.
-- **Train anywhere** — besides the cloud GPU, train on your PC's NVIDIA GPU, a Jetson Thor or an Intel integrated GPU.
+- **Choose where to train** — your PC's NVIDIA GPU, a Jetson Thor, an Intel integrated GPU, or a cloud GPU.
 - **Safety for the arms** — a power check before starting blocks swapped adapters, and servo temperature and voltage are watched during a run with automatic stop.
 - **Good data** — actual collect rate on screen, episode review with synced cameras · 3D · joint plots, bulk delete of bad episodes, repair of broken datasets.
 - **Real-world success rate** — press S / F during a run to compare checkpoints by success rate.
@@ -51,7 +52,7 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
 |---|---|
 | Arms | **SO-ARM101** (Feetech STS3215) · **ROBOTIS OMX** (Dynamixel) — single / bimanual |
 | OS | **Ubuntu** 22.04 · 24.04 · 26.04 · **Windows** 10 · 11 (native) |
-| Training | **HF Jobs cloud GPU** (pay by the hour) · NVIDIA GPU · Jetson Thor · Intel integrated GPU (XPU) |
+| Training | On-device: NVIDIA GPU · Jetson Thor · Intel integrated GPU (XPU) · Optional: HF Jobs cloud GPU (by the hour) |
 | Rollout (on-device) | Intel Core Ultra **NPU** / GPU / CPU (OpenVINO FP16 · INT8) · NVIDIA GPU · Jetson Thor |
 | Policies | ACT · ACT2 · Diffusion · SmolVLA — [comparison](docs/POLICIES.md) (Korean) |
 
