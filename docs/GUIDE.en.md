@@ -120,7 +120,9 @@ Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate g
 
 - A dataset/policy mismatch is flagged in red **before starting** (camera resolution, single/bimanual, etc.)
 - 10 episodes and a few thousand steps only check the workflow. For the arm to actually grasp, you need **about 50 demos** and enough steps (tens of thousands) — that takes long on an integrated GPU, so HF Jobs is recommended
-- Choose **HF Jobs** under **Run on** to train on Hugging Face cloud GPUs (paid; the hourly price is shown in the list)
+- Choose **HF Jobs** under **Run on** to train on Hugging Face cloud GPUs (paid; the hourly price is shown in the list).
+  Enter a Hugging Face token in the Hub tab first; check the Hugging Face pricing pages for the conditions (plan, payment method).
+  Download the finished model in the Hub tab, convert it to OpenVINO and run it on this device's NPU
 - Details per policy: **[POLICIES.md](POLICIES.md)** (Korean)
 
 ![Training](img/training.png)

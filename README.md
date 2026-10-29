@@ -6,7 +6,8 @@
 
 <p align="center">
   <b>로봇팔 모방학습, 브라우저 하나로.</b><br>
-  셋업부터 데이터 수집 · 학습 · NPU 실행까지 — 명령어 없이
+  셋업부터 데이터 수집 · 학습 · NPU 실행까지 — 명령어 없이<br>
+  GPU 없는 노트북 한 대로 — <b>학습은 클라우드 GPU, 실행은 온디바이스 NPU</b>
 </p>
 
 <p align="center">
@@ -32,11 +33,13 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 위에서 돌아�
 ## 무엇이 다른가
 
 - **명령어 0줄** — 포트 찾기, 모터 진단, 캘리브레이션, 녹화, 학습, 실행까지 전부 화면에서. 셋업 마법사가 한 단계씩 안내합니다.
-- **GPU 없는 노트북에서도 실행** — 학습한 모델을 OpenVINO **FP16 · INT8** 로 바꿔 Intel Core Ultra **NPU** 에서 구동합니다.
+- **실행은 온디바이스** — 학습한 모델을 OpenVINO **FP16 · INT8** 로 바꿔 로봇 옆 노트북의 Intel Core Ultra **NPU** 에서 클라우드 없이 구동합니다.
   변환할 때 PyTorch 대비 오차와 추론 시간을 장치별로 재서 보여 줍니다.
+- **GPU 가 없어도 학습** — Hugging Face 클라우드 GPU(HF Jobs)를 필요할 때만 시간 단위로 빌려 클릭 한 번으로 학습합니다
+  (T4 시간당 $0.40 부터, 학습 화면에 요금이 보입니다). 학습이 끝난 모델은 받아서 바로 NPU 로 실행합니다.
 - **Ubuntu · Windows 대등 지원** — Windows 도 WSL 없이 네이티브. 데이터셋·캘리브레이션·모델을 OS 사이에 그대로 옮깁니다.
 - **한팔도 양팔도** — SO-ARM101 · ROBOTIS OMX 를 한팔·양팔로. 전환은 버튼 하나.
-- **학습은 어디서든** — 내 PC 의 NVIDIA GPU · Intel 내장 GPU, 또는 클릭 한 번으로 HF Jobs 클라우드 GPU.
+- **학습은 어디서든** — 클라우드 GPU 말고도 내 PC 의 NVIDIA GPU · Jetson Thor · Intel 내장 GPU 에서 학습합니다.
 - **팔을 지키는 안전장치** — 시작 전 전원 점검으로 어댑터 혼용을 막고, 실행 중 서보 온도·전압을 감시해 이상하면 자동 정지.
 - **좋은 데이터** — 실제 수집 주기 표시, 카메라 동기 재생 · 3D · 관절 그래프로 에피소드 리뷰, 불량 에피소드 일괄 삭제, 끊긴 데이터셋 복구.
 - **실기 성공률** — 실행 중 S / F 키로 기록해 체크포인트별 성공률을 비교합니다.
@@ -48,8 +51,8 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 위에서 돌아�
 |---|---|
 | 로봇팔 | **SO-ARM101** (Feetech STS3215) · **ROBOTIS OMX** (Dynamixel) — 한팔 / 양팔 |
 | OS | **Ubuntu** 22.04 · 24.04 · 26.04 · **Windows** 10 · 11 (네이티브) |
-| 학습 | NVIDIA GPU · Jetson Thor · Intel 내장 GPU(XPU) · HF Jobs 클라우드 |
-| 실행 | Intel Core Ultra **NPU** / GPU / CPU (OpenVINO FP16 · INT8) · NVIDIA GPU · Jetson Thor |
+| 학습 | **HF Jobs 클라우드 GPU**(시간 단위 종량제) · NVIDIA GPU · Jetson Thor · Intel 내장 GPU(XPU) |
+| 실행 (온디바이스) | Intel Core Ultra **NPU** / GPU / CPU (OpenVINO FP16 · INT8) · NVIDIA GPU · Jetson Thor |
 | 정책 | ACT · ACT2 · Diffusion · SmolVLA — [비교](docs/POLICIES.md) |
 
 > **실기로 확인** — Lunar Lake 노트북(Core Ultra 200V · RAM 32 GB · Windows 11) 한 대로 SO-ARM101 양팔 · 카메라 3대를
