@@ -1,8 +1,79 @@
-# 설치 · 업데이트 · 운영 상세
+# 설치 · 업데이트 · 운영
 
-README 의 [빠른 시작](../README.md#빠른-시작) 을 넘어서는 내용입니다.
+소개는 [README](../README.md), 화면별 사용법은 [GUIDE.md](GUIDE.md) 에 있습니다.
 
-## 설치 스크립트가 하는 일
+## 빠른 설치
+
+| OS | 설치 | 켜기 |
+|---|---|---|
+| Ubuntu 22.04 · 24.04 · 26.04 | `lerobot_conda.sh` | `./openmimic.sh start` |
+| Windows 10 · 11 (64비트) | `install.ps1` | 레포 폴더의 **`OpenMimic.bat`** 더블클릭 |
+
+켜면 접속 주소가 나옵니다. 브라우저에서 **`http://<PC IP>:8080`** 으로 들어가면 처음엔 **셋업 마법사**가 바로 뜹니다.
+같은 네트워크의 노트북·태블릿에서 접속해도 됩니다.
+
+### Ubuntu 22.04 · 24.04 · 26.04
+
+```bash
+mkdir -p ~/project && cd ~/project
+git clone https://github.com/themakerrobot/openmimic.git openmimic
+cd openmimic && chmod +x lerobot_conda.sh && sudo -v
+nohup ./lerobot_conda.sh > /dev/null 2>&1 &
+sleep 3; tail -f lerobot_conda.log        # "=== 완료 ===" 가 나오면 Ctrl+C
+```
+
+설치가 끝나면 **한 번 로그아웃 후 다시 로그인**하고 (시리얼·카메라 권한), 켭니다.
+
+```bash
+~/project/openmimic/openmimic.sh start     # 켜기 — 접속 주소를 알려 줍니다
+```
+
+| 명령 | 하는 일 |
+|---|---|
+| `./openmimic.sh start` · `stop` · `restart` | 켜기 · 끄기 · 다시 켜기 (백그라운드) |
+| `./openmimic.sh status` | 켜져 있는지와 접속 주소 |
+| `./openmimic.sh log` | 로그 보기 (Ctrl+C 로 나가도 OpenMimic 은 계속 돎) |
+| `./openmimic.sh update` | 최신 버전 받고 다시 켜기 |
+| `./openmimic.sh autostart on` | 로그인(부팅) 때 자동으로 켜기 — 이 계정만, `off` 로 끔 |
+
+### Windows 10 · 11 (64비트, 네이티브)
+
+WSL 없이 Windows 에서 바로 돕니다. SO-ARM101 · OMX 한팔·양팔 모두 Ubuntu 와 같게 지원합니다.
+PowerShell 에서 (git 이 없으면 먼저 `winget install --id Git.Git -e`). 관리자 권한은 필요 없습니다.
+
+```powershell
+git clone https://github.com/themakerrobot/openmimic.git $HOME\project\openmimic; cd $HOME\project\openmimic
+powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" 가 나올 때까지 (로그: lerobot_conda.log)
+```
+
+설치가 끝나면 탐색기에서 레포 폴더(`%USERPROFILE%\project\openmimic`)의 **`OpenMimic.bat` 을 더블클릭**합니다.
+바탕화면에 두려면 파일을 옮기지 말고 **바로 가기**를 만드세요. 처음 켤 때 Windows 방화벽 창이 뜨면 **허용**해야 다른 PC·태블릿에서 접속됩니다.
+
+| 명령 (cmd 에서 레포 폴더로 이동해서 · PowerShell 은 `.\OpenMimic.bat …`) | 하는 일 |
+|---|---|
+| `OpenMimic.bat` (더블클릭) | **그 창에서** 켜기 — 로그가 창에 보이고 **Ctrl+C** 로 끔 |
+| `OpenMimic.bat update` | 최신 버전 받고 그 창에서 다시 켜기 |
+| `OpenMimic.bat stop` · `restart` · `status` | 끄기 · 다시 켜기 · 켜져 있는지와 접속 주소 |
+| `OpenMimic.bat background` · `log` | 창 없이 켜기 · 그 로그 보기 |
+| `OpenMimic.bat autostart on` | 로그인 때 최소화된 창으로 켜기 — 이 계정만, `off` 로 끔 |
+
+- 끌 때는 **Ctrl+C** — 수집·학습 같은 작업은 따로 돌아 계속 진행되고, 다시 켜면 작업 탭에 그대로 보입니다.
+  창을 **X 로 닫으면** 진행 중인 작업도 같이 꺼집니다.
+- `OpenMimic.bat` 은 `openmimic.ps1` 을 부릅니다 — `powershell -ExecutionPolicy Bypass -File .\openmimic.ps1 start` 와 같습니다.
+- Intel 내장 GPU(XPU)로 학습하려면 설치할 때 PyTorch XPU 판을 고릅니다 — [INTEL.md](INTEL.md).
+  내장 GPU 는 느리므로(Arc 140V · ACT · 카메라 3대 · 배치 8 에서 스텝당 약 2.3초) 긴 학습은 **HF Jobs** 를 권합니다.
+- 실기 확인: Lunar Lake 노트북(Core Ultra 200V · Arc 140V · RAM 32 GB, Windows 11)에서 SO-ARM101 양팔 · 카메라 3대로
+  설치 → 셋업 마법사 → 제어 → 수집 → XPU 학습 → OpenVINO 변환 → **NPU 실행**까지. 자세한 내용과 남은 확인 항목은 [WINDOWS_PORT.md](WINDOWS_PORT.md)
+
+### 공통
+
+- **다른 사람 환경을 바꾸지 않습니다** — conda 는 설치만 하고(`conda init` 안 함) 셸 설정·PATH 를 건드리지 않으며, 패키지는 전부 `openmimic` 가상환경 안에 들어갑니다
+- 데이터·HF 캐시·캘리브레이션은 레포 폴더 `data/` 아래에 둡니다
+- 업데이트·파일 위치·플랫폼 등 자세한 내용은 **[INSTALL.md](INSTALL.md)**
+
+## 설치 상세
+
+### 설치 스크립트가 하는 일 (Ubuntu)
 
 ```bash
 mkdir -p ~/project && cd ~/project

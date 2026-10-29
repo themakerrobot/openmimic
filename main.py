@@ -9,7 +9,7 @@
 #  - 수집은 이 파일을 --worker 로 띄워 lerobot record_loop() 를 직접 부릅니다.
 #    상태·미리보기·명령은 전부 파일(RUN_DIR)이라 OpenMimic 을 재시작해도 세션이 유지됩니다.
 #  - 외부 프로세스는 argv 리스트 + shell=False 로만 실행합니다.
-#  - 설정은 openmimic_config.json (셋업 탭에서 채움). 자세한 것은 README.
+#  - 설정은 openmimic_config.json (셋업 탭에서 채움). 자세한 것은 docs/GUIDE.md · docs/DEVELOPMENT.md.
 #
 #  실행 (OpenMimic conda env 안에서)
 #   source ~/project/openmimic/activate.sh

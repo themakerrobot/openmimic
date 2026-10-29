@@ -1,6 +1,6 @@
 # Intel Core Ultra PC — OpenVINO 추론 · XPU 학습
 
-Ubuntu Intel Core Ultra 노트북·미니PC 에서 셋업·캘리브레이션·제어·수집·리뷰가 NVIDIA 기기(Thor 등)와 똑같이 되고,
+Intel Core Ultra 노트북·미니PC(Ubuntu · Windows)에서 셋업·캘리브레이션·제어·수집·리뷰가 NVIDIA 기기(Thor 등)와 똑같이 되고,
 추론은 OpenVINO 로 **NPU** 에서 돌립니다. **Meteor Lake (Core Ultra 1세대) 이상**을 기준으로 합니다.
 OpenVINO 변환은 지금 **ACT · ACT2** 정책만 됩니다.
 
@@ -19,10 +19,9 @@ groups                                                                   # rende
   (우분투·커널 버전 조합은 릴리스 노트로 확인 필요)
 - GPU 가 안 보이면: [compute-runtime](https://github.com/intel/compute-runtime/releases) (OpenCL / level-zero)
 - Ubuntu 26.04 + Core Ultra 에서는 기본 설치만으로 `['CPU', 'GPU', 'NPU']` 가 잡혔습니다 (실기 확인).
-- Windows(`win-intel`, [INSTALL.md](INSTALL.md#windows-10--11--installps1-시험-단계))는 `install.ps1` 이 OpenVINO 까지 설치하고 같은 점검을 합니다.
+- Windows(`win-intel`, [INSTALL.md](INSTALL.md#windows-10--11--installps1))는 `install.ps1` 이 OpenVINO 까지 설치하고 같은 점검을 합니다.
   NPU 는 장치 관리자의 **신경 프로세서**(Intel AI Boost) 드라이버, GPU 는 Intel 그래픽 드라이버가 필요합니다.
-  Windows 실기(Core Ultra 200V)에서 OpenVINO 가 `CPU GPU NPU` 를 잡는 것과 XPU 휠(`xpu: True`, Arc 140V) 설치까지 확인했고,
-  **NPU 변환·추론과 XPU 학습은 아직 확인 전**입니다 ([WINDOWS_PORT.md](WINDOWS_PORT.md)).
+  Windows 실기(Lunar Lake · Core Ultra 200V · Arc 140V · RAM 32 GB)에서 XPU 학습 → **OpenVINO FP16 · INT8 변환 → NPU 실행**(SO-ARM101 양팔)까지 확인했습니다.
 
 ## 2. 모델 가져오기
 
@@ -52,6 +51,7 @@ p95 가 프레임 예산(30 fps 면 33 ms) 안이고 오차가 작으면 **OK** 
   팔이 움직이기 전에 시작이 거부됩니다.
 - 체크포인트를 다시 학습·덮어쓰면 **OV(다시 변환 필요)** 로 표시되고 시작이 막힙니다 — 다시 변환하세요.
 - INT8 은 더 빠를 수 있지만 오차가 커집니다. 표의 오차·판정을 보고 고르세요. 기본은 FP16 입니다.
+- FP16 · INT8 변환과 NPU 실행은 Windows 실기(Lunar Lake)로 확인했습니다. Ubuntu + Core Ultra 는 OpenVINO 의 NPU 인식과 XPU 학습까지 실기 확인입니다.
 
 ## Intel 기기에서 학습
 

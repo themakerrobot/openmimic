@@ -1,6 +1,6 @@
 # OpenMimic 개발 문서
 
-사용법은 [README](../README.md) 에 있습니다. 이 문서는 구조와 "왜 이렇게 했는지" 를 적습니다.
+사용법은 [GUIDE.md](GUIDE.md), 설치는 [INSTALL.md](INSTALL.md) 에 있습니다. 이 문서는 구조와 "왜 이렇게 했는지" 를 적습니다.
 
 - [파일 구성](#파일-구성)
 - [기종 (SO-ARM101 / OMX)](#기종-so-arm101--omx)
