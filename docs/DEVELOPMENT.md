@@ -529,7 +529,9 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 - 포트는 `sim://<side>_<role>` 이라 껐다 켜도 이름이 같고, 캘리브 id 는 `sim_follower` 처럼 따로 둬 실제 팔 파일과 섞이지 않습니다.
 - **가상 시리얼** (`openmimic_fakeserial`): 보드 레지스터(캘리브레이션 값·토크)와 MuJoCo 장면은 서버·수집 worker·롤아웃이 함께 봐야 하므로
   가상 팔 도구 프로세스 하나에 둡니다. 각 프로세스는 `install()` 로 `serial.Serial` 자리에 생성 함수를 두어, `sim://` 포트일 때만
-  `FakeSerial` 이 `127.0.0.1` 의 가상 팔 도구에 접속합니다 (`OMSIM1 <토큰> <보드>` 인사 뒤로는 시리얼과 같은 바이트 스트림, 연결마다 따로 응답).
+  `FakeSerial` 이 `127.0.0.1` 의 가상 팔 도구에 접속합니다 (`OMSIM2 <토큰> <보드>` 인사 뒤로는 `4바이트 길이 + 내용` 틀 단위 — write 하나에 응답 틀 하나, 답할 패킷이 없으면 빈 틀, 연결마다 따로 응답).
+  응답 틀이 오기 전의 read 는 그 틀을 최대 2초 기다립니다. 가상 장치 프로세스가 잠깐 늦어도(Windows 스레드 전환·GIL)
+  servo SDK 의 응답 제한 시간(약 34 ms)에 걸려 `There is no status packet` 으로 끊기지 않게 하려는 것입니다.
   scservo_sdk · dynamixel_sdk 가 `serial.Serial(...)` 을 그 자리에서 만들기 때문에 lerobot 코드는 그대로입니다. PTY·com0com 같은 OS 기능이 없어
   Linux · Windows 가 같은 경로를 탑니다. 예전 PTY 판과 같은 시험(가상 장치 전 구성)을 모두 통과합니다.
 - 가상 팔 도구는 보드 잠금 안에서 레지스터만 읽고 MuJoCo 호출(월드 잠금)은 그 밖에서 합니다. 두 잠금을 겹쳐 잡으면 에피소드 사이 시연 계획(이 서버에서 약 80 ms)

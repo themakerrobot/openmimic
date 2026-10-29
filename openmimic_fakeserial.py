@@ -11,7 +11,11 @@ install() 뒤에는 serial.Serial(port="sim://main_follower", …) 만 FakeSeria
 실제 포트(/dev/ttyACM0 · COM5 …)는 원래 pyserial 객체가 그대로 만들어집니다.
 scservo_sdk · dynamixel_sdk 의 PortHandler 가 serial.Serial(…) 을 만들므로 lerobot 코드는 손대지 않습니다.
 
-연결 절차: 클라이언트가 "OMSIM1 <토큰> <보드 이름>\\n" 을 보내면 서버가 "OK\\n" — 그 뒤로는 시리얼과 같은 바이트 스트림.
+연결 절차: 클라이언트가 "OMSIM2 <토큰> <보드 이름>\\n" 을 보내면 서버가 "OK\\n".
+그 뒤로는 틀(4바이트 길이 + 내용) 단위로 주고받습니다 — 클라이언트의 write 한 번이 틀 하나, 서버는 틀마다 응답 틀 하나
+(응답할 패킷이 없으면 빈 틀). 그래서 클라이언트는 '보낸 패킷의 답이 아직 안 왔는지' 를 알고,
+가상 장치 프로세스가 잠깐 늦어도(Windows 스레드 전환·GIL) lerobot 의 짧은 응답 제한 시간(수십 ms)에 걸리지 않게
+답이 올 때까지 기다렸다가 넘깁니다. 실제 보드처럼 '답이 없는' 경우(없는 id·SYNC WRITE)는 빈 틀이 바로 와서 기다리지 않습니다.
 주소·토큰은 가상 팔 도구가 openmimic_sim.json 의 "endpoint" 에 씁니다.
 """
 from __future__ import annotations
@@ -20,6 +24,7 @@ import json
 import secrets
 import select
 import socket
+import struct
 import threading
 import time
 from pathlib import Path
@@ -28,7 +33,9 @@ import openmimic_platform as P
 
 SIM_FILE = Path(__file__).resolve().parent / "openmimic_sim.json"     # tools_simarms.py 가 켜져 있을 때만 있음
 PREFIX = P.SIM_PREFIX
-HELLO = "OMSIM1"
+HELLO = "OMSIM2"                  # 틀 단위 프로토콜 — 예전 판(OMSIM1, 바이트 스트림)의 가상 장치와는 연결하지 않습니다
+ACK_WAIT = 2.0                    # 보낸 패킷의 응답 틀을 기다리는 최대 시간 (초)
+_LEN = struct.Struct("<I")
 _installed = False
 
 
@@ -76,7 +83,9 @@ class FakeSerial:
         self.xonxoff, self.rtscts, self.dsrdtr = xonxoff, rtscts, dsrdtr
         self.is_open = False
         self._sock = None
-        self._buf = bytearray()
+        self._buf = bytearray()           # 읽을 수 있는 바이트 (응답 틀의 내용)
+        self._raw = bytearray()           # 소켓에서 받은, 아직 틀로 못 자른 바이트
+        self._pending = 0                 # 보냈지만 응답 틀이 아직 안 온 write 수
         if port is not None:
             self.open()
 
@@ -122,10 +131,15 @@ class FakeSerial:
             raise serial.SerialException(f"could not open port {self._port}: {e}") from e
         if reply.strip() != b"OK":
             s.close()
-            raise serial.SerialException(f"could not open port {self._port}: {reply.decode(errors='ignore').strip()}")
+            why = reply.decode(errors="ignore").strip()
+            if why.startswith("NO bad hello"):
+                why = "가상 장치가 예전 판으로 켜져 있습니다 — 가상 장치를 껐다 다시 켜세요"
+            raise serial.SerialException(f"could not open port {self._port}: {why}")
         s.setblocking(False)
         self._sock = s
         self._buf.clear()
+        self._raw.clear()
+        self._pending = 0
         self.is_open = True
 
     def close(self):
@@ -171,12 +185,29 @@ class FakeSerial:
         if not data:
             self.close()
             raise serial.SerialException(f"{self._port}: 가상 장치가 꺼졌습니다")
-        self._buf += data
+        self._raw += data
+        while len(self._raw) >= _LEN.size:
+            n = _LEN.unpack_from(self._raw)[0]
+            if len(self._raw) < _LEN.size + n:
+                break
+            self._buf += self._raw[_LEN.size:_LEN.size + n]
+            del self._raw[:_LEN.size + n]
+            self._pending = max(0, self._pending - 1)
+
+    def _settle(self):
+        """보낸 패킷들의 응답 틀이 모두 올 때까지 (ACK_WAIT 까지) 기다립니다. 가상 보드는 늦더라도 반드시 틀을 돌려줍니다."""
+        end = time.monotonic() + ACK_WAIT
+        self._pump(0)
+        while self._pending and self._sock is not None:
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            self._pump(left)
 
     @property
     def in_waiting(self):
         self._check()
-        self._pump(0)
+        self._settle()
         return len(self._buf)
 
     def inWaiting(self):        # pyserial 옛 이름
@@ -190,6 +221,9 @@ class FakeSerial:
         self._check()
         deadline = None if self.timeout is None else time.monotonic() + self.timeout
         self._pump(0)
+        if len(self._buf) < size:
+            # 답을 기다리는 패킷이 있으면 그 답부터 — timeout=0(servo SDK)이어도 가상 장치가 늦어서 끊기지 않게
+            self._settle()
         while len(self._buf) < size:
             if deadline is None:
                 self._pump(None)
@@ -204,7 +238,7 @@ class FakeSerial:
 
     def read_all(self):
         self._check()
-        self._pump(0)
+        self._settle()
         out = bytes(self._buf)
         self._buf.clear()
         return out
@@ -227,7 +261,8 @@ class FakeSerial:
         data = bytes(data)
         try:
             self._sock.setblocking(True)
-            self._sock.sendall(data)
+            self._sock.sendall(_LEN.pack(len(data)) + data)
+            self._pending += 1
         except OSError as e:
             import serial
             self.close()
@@ -242,7 +277,7 @@ class FakeSerial:
 
     def reset_input_buffer(self):
         self._check()
-        self._pump(0)
+        self._settle()                    # 늦게 올 답이 비운 뒤에 들어와 다음 응답과 섞이지 않게
         self._buf.clear()
 
     def reset_output_buffer(self):
@@ -344,15 +379,20 @@ class SimPortServer:
             conn.sendall(b"OK\n")
             conn.settimeout(None)
             conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            buf = bytearray()
+            raw, buf = bytearray(), bytearray()
             while True:
                 data = conn.recv(4096)
                 if not data:
                     return
-                buf += data
-                out = handle(buf)
-                if out:
-                    conn.sendall(b"".join(out))
+                raw += data
+                while len(raw) >= _LEN.size:          # 클라이언트 write 하나 = 틀 하나 → 응답 틀 하나 (없으면 빈 틀)
+                    n = _LEN.unpack_from(raw)[0]
+                    if len(raw) < _LEN.size + n:
+                        break
+                    buf += raw[_LEN.size:_LEN.size + n]
+                    del raw[:_LEN.size + n]
+                    out = b"".join(handle(buf))
+                    conn.sendall(_LEN.pack(len(out)) + out)
         except OSError:
             return
         finally:
