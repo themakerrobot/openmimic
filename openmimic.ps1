@@ -159,7 +159,7 @@ function Set-Autostart([string]$Mode) {
             Remove-OldAutostart
             $ws = New-Object -ComObject WScript.Shell
             $l = $ws.CreateShortcut($StartupLnk)
-            $l.TargetPath = Join-Path $PSHOME 'powershell.exe'
+            $l.TargetPath = (Get-Process -Id $PID).Path                   # 지금 실행 중인 powershell.exe 또는 pwsh.exe
             $l.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$Dir\openmimic.ps1`" start"
             $l.WorkingDirectory = $Dir
             $l.WindowStyle = 7                                             # 최소화로 시작
