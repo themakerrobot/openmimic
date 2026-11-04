@@ -32,7 +32,7 @@
 |---|---|
 | `main.py` | 웹 툴 전체 (FastAPI 한 파일, port 8080). `python main.py --worker record <jid>` 로 수집 worker 도 겸함 |
 | `openmimic.sh` | 켜기·끄기·상태·업데이트·자동 시작(systemd --user). 항상 `activate.sh` 로 환경을 켜고 실행 |
-| `tools_armcheck.py` | SO-ARM101(STS3215) 팔 점검 — 셋업 탭·마법사 진단과 CLI 공용 |
+| `tools_armcheck.py` | SO-ARM101(STS3215) 팔 점검 — 포트·카메라 탭·마법사 진단과 CLI 공용 |
 | `tools_dxlcheck.py` | OMX(Dynamixel X) 팔 점검 — 같은 함수 이름·결과 형식 |
 | `openmimic_rollout.py` | 롤아웃 실행기 — lerobot-rollout 을 같은 프로세스에서 돌리며 실시간 상태(카메라·관절·추론 ms·Hz)를 `RUN_DIR/<jid>/` 에 씀. `--openmimic.engine=ov` 면 openmimic_ov 로 신경망 교체 |
 | `openmimic_hub.py` | Hugging Face Hub — 로그인 상태(whoami 캐시)·하드웨어 목록, 데이터셋 올리기/받기, 모델 받기, HF Jobs 클라우드 학습 래퍼 |
@@ -515,9 +515,15 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 
 ## 화면 구조 — 탭·첫 실행·막힘 안내
 
-- **탭 순서**(`nav_html`): 작업 순서대로 셋업 · 캘리브레이션 · 제어 · 수집 · 데이터셋 · 학습 · 모델 · 실행. 자주 안 쓰는 프로젝트 · 허브 · 작업은
-  `<details class=navmore>` **더보기** 메뉴에 둡니다(바깥을 누르면 닫힘). `.nav` 는 줄어들 수 있고(`min-width:0`) 상태 칩은 줄지 않아,
-  좁은 화면에서 탭이 칩 밑으로 숨지 않습니다. 1750px 아래에서는 칩 이름표(`.clab`)를, 1300px 아래에서는 기종 표시를 숨깁니다.
+- **탭 구조**(`NAV_GROUPS` · `nav_html`): 큰 탭 4개 **로봇 · 데이터 · 학습 · 실행** 이 작업 순서이고, 페이지가 넘기는 화면 키
+  (`wz` `st` `cb` `ct` / `ds` `co` / `tr` `md` / `ro`)로 그룹을 찾아 그 아래 `.subnav` 하위 탭 줄을 그립니다(하위 탭이 하나면 생략).
+  자주 안 쓰는 프로젝트 · 허브 · 작업은 `<details class=navmore>` **더보기** 메뉴에 둡니다(바깥을 누르면 닫힘). `.nav` 는 줄어들 수 있고
+  (`min-width:0`) 상태 칩은 줄지 않아, 좁은 화면에서 탭이 칩 밑으로 숨지 않습니다. 1300px 아래에서는 기종 표시를 숨깁니다.
+- **상단 칩**: 열린 프로젝트 하나(한팔/양팔은 작게, 장비 구성 이름은 툴팁). **포트 미설정** 은 포트가 비었을 때만 뜹니다.
+- **목록 줄 동작**: 줄마다 보이는 버튼은 하나(또는 없음)이고, 부가 동작은 `row_menu()` 가 그리는 `<details class=rowmenu>` **⋯** 메뉴에 넣습니다
+  (바깥을 누르면 닫힘). 고칠 수 있는 문제 표시는 표시 자체를 버튼으로 둡니다(`button.fixbadge`, 예: 마무리 안 됨 · 복구).
+- **작업 탭**: 끝난 작업은 최근 `JOBS_RECENT`(10)개만 펼치고 나머지는 접습니다. `POST /api/deljobs_done` 은 끝난 작업 기록을 지우되
+  학습 그래프·모델 이력·실행 기록·OpenVINO 변환 결과가 읽는 `JOBS_KEEP_KINDS`(train · cloudtrain · rollout · ovconvert)는 남깁니다.
 - **상태 칩**: 프로젝트 · 환경 · 한팔/양팔 · 포트 미설정 · 작업 상태. 작업 종류는 `JOB_KIND_LABEL` 의 한국어 이름(대기·학습·수집…)으로 보입니다.
 - **첫 실행**: `/` 는 포트 미설정 · 데이터셋 없음 · 모델 없음이고 이 브라우저가 마법사를 연 적이 없으면(쿠키 `openmimic_wiz`) 셋업 마법사로 보냅니다.
   그다음부터는 데이터셋 화면 위에 **시작하기**(`getting_started()` — 포트 · 캘리브레이션 파일 · 에피소드 있는 데이터셋 · 체크포인트 · 실행 기록)가

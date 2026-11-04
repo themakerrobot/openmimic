@@ -459,7 +459,10 @@ NAV_EN = {"셋업": "Setup", "캘리브레이션": "Calibration", "제어": "Con
           "OpenVINO 변환": "OpenVINO convert", "복구": "Repair", "삭제": "Delete",
           # 표 머리·입력칸 이름표·작은 제목 — 한 낱말짜리라 자리를 정해 바꿉니다
           "로봇": "Robot", "크기": "Size", "상태": "Status", "시작": "Started", "종류": "Kind", "폭": "Span",
-          "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration"}
+          "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration",
+          # 큰 탭·하위 탭
+          "데이터": "Data", "포트·카메라": "Ports & cameras", "새 학습": "New training", "셋업 마법사": "Setup wizard",
+          "끝남": "Done", "실행 중": "Running"}
 _NAV_RE = re.compile(r'(<span class=(?:tl|jobk)[^>]*>|<h2>|<b class=gsname>|<th[^>]*>|<p class=eyebrow>|<label class=f>'
                      r'|<a class=btnlink [^>]*>|<a href="/[^"]*">)'
                      r'([^<]+?)( ?</span>| ?</h2>| ?</b>| ?</th>| ?</p>| <| ?</a>)')
@@ -1249,7 +1252,7 @@ def _need_ports(role):
         if not arm.get(f"{role}_port"):
             raise NotImplementedError(
                 f"{side + ' ' if BIMANUAL else ''}{'팔로워' if role == 'follower' else '리더'} 포트가 "
-                f"지정되지 않았습니다 — 셋업 탭에서 먼저 설정하세요")
+                f"지정되지 않았습니다 — 로봇 › 포트·카메라에서 먼저 설정하세요")
 
 
 def mrt_value(v):
@@ -1707,7 +1710,7 @@ class ArmCtl:
 
     def connect(self):
         if not self.cfg.get("follower_port"):
-            raise RuntimeError("팔로워 포트가 지정되지 않았습니다 — 셋업 탭에서 먼저 설정하세요")
+            raise RuntimeError("팔로워 포트가 지정되지 않았습니다 — 로봇 › 포트·카메라에서 먼저 설정하세요")
         mrt = mrt_value(CFG.get("max_relative_target"))
         robot = make_arm("follower", self.cfg, mrt=mrt)     # 기종(SO-ARM101/OMX)에 맞는 lerobot 클래스
         if not robot.calibration:
@@ -2619,13 +2622,13 @@ def robot_busy(control=True):
     if control and (ports_held() or CTL_OWNER is not None):     # 연결 중(약 1초)도 점유로 봅니다
         return {"id": "manual-control (제어 탭)", "kind": "control", "alive": True}
     if WATCH.on:
-        return {"id": "port-watch (셋업 탭)", "kind": "setup", "alive": True}
+        return {"id": "port-watch (로봇 › 포트·카메라)", "kind": "setup", "alive": True}
     if CALIB.active:
         return {"id": "calibration (캘리브레이션 탭)", "kind": "calib", "alive": True}
     if MOTORSETUP.active:
-        return {"id": "motor-id-setup (셋업 탭)", "kind": "setup", "alive": True}
+        return {"id": "motor-id-setup (로봇 › 포트·카메라)", "kind": "setup", "alive": True}
     if ARMCHECK.active:
-        return {"id": "arm-check (셋업 탭)", "kind": "setup", "alive": True}
+        return {"id": "arm-check (로봇 › 포트·카메라)", "kind": "setup", "alive": True}
     if VERIFY.active:
         return {"id": "verify (셋업 마법사)", "kind": "setup", "alive": True}
     return busy_with(("record", "rollout"))
@@ -2717,15 +2720,33 @@ a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .statuscluster a.chip{display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none}
 .statuscluster a.chip .badge{max-width:14em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){ .statuscluster a.chip .badge{max-width:6.5em} }
-.clab{font-family:var(--sans);font-size:11px;color:var(--dim)}
 .fsbtn{flex:0 0 auto}
+.chipsub{opacity:.75;font-size:.92em}
+button.fixbadge{cursor:pointer;font:inherit;font-size:11px;padding:2px 8px;line-height:1.4}
+button.fixbadge:hover{filter:brightness(1.25)}
+.subnav{display:flex;gap:4px;padding:8px 22px;background:var(--bg);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.subnav::-webkit-scrollbar{display:none}
+.subnav a{flex:0 0 auto;padding:5px 13px;border-radius:999px;color:var(--muted);font-size:13px;font-weight:500;border:1px solid transparent}
+.subnav a:hover{color:var(--text);text-decoration:none;background:var(--surface)}
+.subnav a.on{color:var(--text);background:var(--surface2);border-color:var(--line)}
+@media(max-width:820px){ .subnav{padding:6px 10px} }
+/* 목록 줄의 부가 동작(다운로드·삭제 등)은 ⋯ 메뉴로 — 줄마다 버튼이 늘어서지 않게 */
+.rowmenu{position:relative;display:inline-block}
+.rowmenu>summary{list-style:none;cursor:pointer;padding:3px 10px;border:1px solid var(--line);border-radius:6px;color:var(--muted);font-size:15px;line-height:1.2}
+.rowmenu>summary::-webkit-details-marker{display:none}
+.rowmenu>summary:hover,.rowmenu[open]>summary{color:var(--text);border-color:var(--accent)}
+.rowmenu .menu{position:absolute;right:0;top:calc(100% + 4px);min-width:150px;background:var(--surface);border:1px solid var(--line);
+  border-radius:8px;padding:5px;z-index:30;box-shadow:0 8px 24px rgba(0,0,0,.35);text-align:left;display:flex;flex-direction:column}
+.rowmenu .menu>a,.rowmenu .menu>button{display:block;width:100%;text-align:left;padding:7px 11px;border:0;border-radius:6px;
+  background:transparent;color:var(--text);font-size:13.5px;white-space:nowrap;cursor:pointer}
+.rowmenu .menu>a:hover,.rowmenu .menu>button:hover{background:var(--surface2);text-decoration:none}
+.rowmenu .menu>.danger{color:var(--bad)}
 .warnbar{background:rgba(217,161,59,.12);border-bottom:1px solid rgba(217,161,59,.5);color:var(--warn);
   padding:8px 22px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
 .jobtxt{color:inherit;overflow:hidden;text-overflow:ellipsis;min-width:0}
 .langbtn{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:2px 7px;text-decoration:none}
 .langbtn:hover{color:var(--text);border-color:var(--accent);text-decoration:none}
 @media(max-width:1600px){ .statuscluster .jobid{display:none} .nav a{padding:0 10px} .appbar{gap:18px} }
-@media(max-width:1750px){ .clab{display:none} }
 @media(max-width:1350px){ .nav a{padding:0 8px} }
 @media(max-width:1300px) and (min-width:821px){ .brand small{display:none} .nav a{padding:0 6px;font-size:13px}
   .navmore>summary{padding:0 6px;font-size:13px} .statuscluster{gap:6px} .appbar{gap:10px;padding:0 14px} }
@@ -2861,7 +2882,7 @@ a.btnlink.primary{background:var(--accent-dim);border-color:var(--accent);color:
 </style>
 <script>
 document.addEventListener('click',function(e){
-  document.querySelectorAll('details.navmore[open]').forEach(function(d){ if(!d.contains(e.target)) d.removeAttribute('open'); });
+  document.querySelectorAll('details.navmore[open],details.rowmenu[open]').forEach(function(d){ if(!d.contains(e.target)) d.removeAttribute('open'); });
 });
 function toggleFS(){
   var el=document.documentElement;
@@ -2892,6 +2913,29 @@ JOB_KIND_LABEL = {"record": "수집", "train": "학습", "cloudtrain": "클라�
                   "repair": "복구", "delete": "삭제"}
 
 
+def row_menu(items):
+    """목록 줄의 ⋯ 메뉴. items = [(이름, href 또는 None, onclick 또는 None, 위험 여부, title)]"""
+    out = []
+    for label, href, onclick, danger, title in items:
+        cls = ' class=danger' if danger else ''
+        tt = f' title="{esc(title)}"' if title else ''
+        if href:
+            out.append(f'<a href="{esc(href)}"{cls}{tt}>{label}</a>')
+        else:
+            out.append(f'<button type=button{cls}{tt} onclick="{onclick}">{label}</button>')
+    return f'<details class=rowmenu><summary aria-label="더 보기 메뉴">⋯</summary><div class=menu>{"".join(out)}</div></details>'
+
+
+# 큰 탭 → 하위 탭. (그룹 키, 큰 탭 이름, 큰 탭 주소, [(주소, 하위 탭 이름, 화면 키)]) — 화면 키는 각 페이지가 nav_html 에 넘기는 값
+NAV_GROUPS = [
+    ("robot", "로봇", "/setup", [("/setup/wizard", "셋업 마법사", "wz"), ("/setup", "포트·카메라", "st"),
+                                 ("/calib", "캘리브레이션", "cb"), ("/control", "제어", "ct")]),
+    ("data", "데이터", "/", [("/", "데이터셋", "ds"), ("/collect", "수집", "co")]),
+    ("train", "학습", "/train", [("/train", "새 학습", "tr"), ("/models", "모델", "md")]),
+    ("run", "실행", "/rollout", [("/rollout", "실행", "ro")]),
+]
+
+
 def nav_html(active=""):
     running = [j for j in jobs_index() if j["alive"] and j["kind"] != "sim"]     # 예전 판의 가상 장치 작업은 숨김
     if any_arm_connected():
@@ -2906,41 +2950,40 @@ def nav_html(active=""):
     else:
         cluster = '<div class=statuscluster><span class=dot></span><span class=jobk title="실행 중인 작업 없음">대기</span></div>'
     pname, _ = active_project()
-    # 상태 칩마다 무엇인지 작은 이름표를 붙입니다 (좁은 화면에서는 이름표를 숨기고 마우스를 올리면 보임)
-    mode_badge = (f'<a href="/projects" class=chip title="열린 프로젝트 — 누르면 프로젝트 목록"><span class=clab>프로젝트</span>'
-                  f'<span class="badge b-run">{esc(pname)}</span></a> ' if pname else
-                  '<a href="/projects" class=chip title="열린 프로젝트 없음 — 모든 데이터셋·모델을 봅니다"><span class=clab>프로젝트</span>'
-                  '<span class=badge>전체</span></a> ')
-    mode_badge += (f'<a href="/setup#envcard" class=chip title="사용 중인 환경(팔 세트 구성)"><span class=clab>환경</span>'
-                   f'<span class=badge>{esc(env_name())}</span></a> ')
+    # 상단 칩은 '지금 무엇을 열었나' 하나만 — 프로젝트(= 장비 구성 한 벌). 한팔/양팔은 그 안에 작게, 환경 이름은 툴팁에만.
+    arms = "양팔" if BIMANUAL else "한팔"
+    mode_badge = (f'<a href="/projects" class=chip title="열린 프로젝트 — 누르면 프로젝트 목록 (장비 구성: {esc(env_name())})">'
+                  f'<span class="badge{" b-run" if pname else ""}">{esc(pname) if pname else "프로젝트 없음"}'
+                  f'<span class=chipsub> · {arms}</span></span></a> ')
     if I18N_FILE.is_file():            # 영어 사전이 있을 때만 한/영 버튼
         mode_badge = '<a href="/lang" class=langbtn title="한국어 / English">한/EN</a> ' + mode_badge
-    mode_badge += ('<span class="badge b-run" title="양팔 구성">양팔</span>' if BIMANUAL
-                   else '<span class="badge" title="한팔 구성">한팔</span>')
-    if not ports_configured():
-        mode_badge += ' <a href="/setup/wizard" title="셋업 마법사에서 포트를 정하세요"><span class="badge b-warn">포트 미설정</span></a>'
+    if not ports_configured():         # 문제가 있을 때만 뜨는 칩
+        mode_badge += '<a href="/setup/wizard" title="셋업 마법사에서 포트를 정하세요"><span class="badge b-warn">포트 미설정</span></a> '
     cluster = cluster.replace('<div class=statuscluster>',
                               f'<div class=statuscluster>{mode_badge}&nbsp;')
 
-    def tab(href, label, key, sub=False):
-        cls = " ".join(c for c in ("on" if key == active else "", "sub" if sub else "") if c)
-        return f'<a href="{href}"{f" class={chr(34)}{cls}{chr(34)}" if cls else ""}><span class=tl>{label}</span></a>'
+    def tab(href, label, key):
+        return f'<a href="{href}"{" class=on" if key == active else ""}><span class=tl>{label}</span></a>'
 
-    # 작업 순서대로: 셋업 → 캘리브레이션 → 제어 → 수집 → 데이터셋 → 학습 → 모델 → 실행, 나머지는 '더보기'
-    subs = [("/projects", "프로젝트", "pj"), ("/hub", "허브", "hb"), ("/jobs", "작업", "jb")]
-    cur = next((lb for _, lb, k in subs if k == active), "")
+    # 작업 순서대로 큰 탭 4개: 로봇 → 데이터 → 학습 → 실행. 같은 일의 화면은 아래 하위 탭으로 묶습니다
+    group = next((g for g in NAV_GROUPS if active in [k for _, _, k in g[3]]), None)
+    tabs = "".join(f'<a href="{g[2]}"{" class=on" if g is group else ""}><span class=tl>{g[1]}</span></a>' for g in NAV_GROUPS)
+    sub = ""
+    if group and len(group[3]) > 1:
+        sub = ('<div class=subnav>' + "".join(tab(h, lb, k) for h, lb, k in group[3]) + '</div>')
+    more_items = [("/projects", "프로젝트", "pj"), ("/hub", "허브", "hb"), ("/jobs", "작업", "jb")]
+    cur = next((lb for _, lb, k in more_items if k == active), "")
     more = (f'<details class=navmore{" data-on=1" if cur else ""}><summary><span class=tl>{cur or "더보기"}</span> ▾</summary><div class=navmenu>'
-            + "".join(f'<a href="{h}"{" class=on" if k == active else ""}><span class=tl>{lb}</span></a>' for h, lb, k in subs)
+            + "".join(f'<a href="{h}"{" class=on" if k == active else ""}><span class=tl>{lb}</span></a>' for h, lb, k in more_items)
             + '</div></details>')
     return (f'<div class=appbar><div class=brand>OpenMimic <a href="/setup/wizard" title="기종 바꾸기 — 셋업 마법사"><small>/ {esc(kind()["label"])}</small></a></div>'
-            f'<div class=nav>{tab("/setup", "셋업", "st")}{tab("/calib", "캘리브레이션", "cb")}{tab("/control", "제어", "ct")}'
-            f'{tab("/collect", "수집", "co")}{tab("/", "데이터셋", "ds")}{tab("/train", "학습", "tr")}{tab("/models", "모델", "md")}'
-            f'{tab("/rollout", "실행", "ro")}</div>{more}{cluster}'
+            f'<div class=nav>{tabs}</div>{more}{cluster}'
             f'<button class=fsbtn title="전체화면" aria-label="전체화면" onclick="toggleFS()">'
             f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
             f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
             f'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>'
-            f'</svg></button></div>' + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else ''))
+            f'</svg></button></div>' + sub
+            + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else ''))
 
 
 # ----------------------------- PWA / 키오스크 -------------------------------
@@ -3041,7 +3084,7 @@ async def api_project_save(req: Request):
     if not old or name != old:
         if _env_file(name).exists():
             return JSONResponse({"error": f"같은 이름의 환경 '{name}' 이 이미 있습니다 — 다른 프로젝트 이름을 쓰거나 "
-                                          "셋업 › 환경에서 그 환경을 지운 뒤 만드세요"}, status_code=400)
+                                          "로봇 › 포트·카메라 맨 아래 고급에서 그 구성을 지운 뒤 만드세요"}, status_code=400)
     busy = robot_busy()
     if busy and (b.get("activate") or (old and name != old and d["projects"][old].get("env") == env_name())):
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 끝난 뒤 하세요"}, status_code=400)
@@ -3197,7 +3240,6 @@ def index(request: Request, all: int = 0):
             and not list_datasets() and not list_checkpoints()):
         return RedirectResponse("/setup/wizard", status_code=303)
     pname, pr = active_project()
-    meta = load_dsmeta()
     projects = load_projects()["projects"]
     owner = {x: n for n, pj in projects.items() for x in pj["datasets"]}
     dsets = list_datasets()
@@ -3213,34 +3255,28 @@ def index(request: Request, all: int = 0):
             if not robot_type_ok(d["robot_type"]) else ""
         broken = dataset_unfinalized(n)
         if broken:
-            mismatch += (' <span class="badge b-bad" title="녹화가 끊겨 에피소드 색인이 없습니다 — 열리지 않습니다">마무리 안 됨</span>'
-                         f' <button onclick="repairDs({jsattr(n)})">복구</button>')
-        ver = d["version"]
-        verbadge = (f'<span class=badge>{esc(ver)}</span>' if ver == "v3.0"
-                    else f'<span class="badge b-warn">{esc(ver)}</span>')
-        env = meta.get(n, {}).get("env", "")
-        envcell = (f'<span class=mono style="color:{"var(--text)" if env == cur_env else "var(--dim)"}">{esc(env)}</span>'
-                   if env else '<span class=tiny>-</span>')
+            # 문제 표시와 고치는 버튼을 한 덩어리로 — 줄마다 버튼이 하나 더 늘지 않게
+            mismatch += (f' <button class="badge b-bad fixbadge" onclick="repairDs({jsattr(n)})" '
+                         f'title="녹화가 끊겨 에피소드 색인이 없습니다 — 열리지 않습니다. 누르면 복구">마무리 안 됨 · 복구</button>')
+        if d["version"] != "v3.0":           # 예전 형식만 표시 (v3.0 이 기본)
+            mismatch += f' <span class="badge b-warn">{esc(d["version"])}</span>'
         projcell = ""
         if show_all and projects:
             opts = "".join(f'<option value="{esc(x)}"{" selected" if owner.get(n) == x else ""}>{esc(x)}</option>'
                            for x in projects)
             projcell = (f'<td><select onchange="moveDs({jsattr(n)},this.value)">'
                         f'<option value="">미분류</option>{opts}</select></td>')
+        menu = row_menu([("리뷰", f"/ds/{n}", None, False, ""),
+                         ("다운로드", f"/api/download/{n}", None, False, f"폴더를 그대로 tar 로 내려받습니다 ({d['files']}개 파일)"),
+                         ("삭제", None, f"delDs({jsattr(n)})", True, "")])
         return (f'<tr><td><a href="/ds/{esc(n)}" class=mono>{esc(n)}</a></td>'
-                f'<td class=num>{esc(d["episodes"])}</td><td class=num>{esc(d["frames"])}</td>'
-                f'<td class=num>{esc(d["fps"])}</td>'
-                f'<td class=mono style="color:var(--muted)">{esc(d["robot_type"])}{mismatch}</td>'
-                f'<td>{envcell}</td>{projcell}'
-                f'<td>{verbadge}</td>'
+                f'<td class=num>{esc(d["episodes"])}</td>'
+                f'<td class=num title="{esc(d["fps"])} fps">{esc(d["frames"])}</td>'
+                f'<td class=mono style="color:var(--muted)">{esc(d["robot_type"])}{mismatch}</td>{projcell}'
                 f'<td class=num style="color:var(--muted)">{esc(human_bytes(d["bytes"]))}</td>'
-                f'<td style="text-align:right;white-space:nowrap">'
-                f'<a class=btnlink href="/ds/{esc(n)}">리뷰</a> '
-                f'<a class=btnlink href="/api/download/{esc(n)}" '
-                f'title="폴더를 그대로 tar 로 내려받습니다 ({d["files"]}개 파일)">다운로드</a> '
-                f'<button class=danger onclick="delDs({jsattr(n)})">삭제</button></td></tr>')
+                f'<td style="text-align:right;white-space:nowrap">{menu}</td></tr>')
     rows = "".join(_row(d) for d in view)
-    ncol = 10 + (1 if show_all and projects else 0)
+    ncol = 6 + (1 if show_all and projects else 0)
     if rows:
         empty = ""
     elif show_all:
@@ -3250,8 +3286,7 @@ def index(request: Request, all: int = 0):
                  f'기존 데이터셋은 <a href="/?all=1">전체 보기</a>에서 옮기세요.</td></tr>')
     if pname:
         head = (f'<p class=eyebrow>프로젝트 · {esc(pname)}</p><h2>데이터셋</h2>'
-                f'<p class=muted>{esc(pr["task"]) or "<i>태스크 설명 없음</i>"} · 환경 '
-                f'<span class=mono>{esc(pr["env"] or "지정 안 함")}</span>'
+                f'<p class=muted>{esc(pr["task"]) or "<i>태스크 설명 없음</i>"}'
                 + (f' <span class="badge b-warn">지금 환경은 {esc(cur_env)}</span>' if pr["env"] and pr["env"] != cur_env else "")
                 + (f' · <a href="/">이 프로젝트만 보기</a>' if show_all else f' · <a href="/?all=1">전체 보기</a>')
                 + ' · <a href="/projects">프로젝트 목록</a></p>')
@@ -3262,21 +3297,18 @@ def index(request: Request, all: int = 0):
     return f"""{CSS}{nav_html('ds')}<div class=wrap>
     {head}{getting_started_html(request)}
     <div class=card><table>
-    <tr><th>이름</th><th class=num>에피소드</th><th class=num>프레임</th><th class=num>fps</th>
-    <th>로봇</th><th>환경</th>{projhead}<th>형식</th><th class=num>크기</th><th></th></tr>
+    <tr><th>이름</th><th class=num>에피소드</th><th class=num>프레임</th>
+    <th>로봇</th>{projhead}<th class=num>크기</th><th></th></tr>
     {rows}{empty}</table></div>
-    <p class=muted>다운로드한 파일은 다른 OpenMimic 의 데이터셋 화면 <b>가져오기</b>로 그대로 옮길 수 있습니다.
-    환경 열은 수집할 때 쓴 환경이고, 흐리게 보이면 지금 환경과 다른 것입니다.
-    <b>삭제</b>는 폴더를 통째로 지웁니다 (복구 불가, 이름을 입력해야 실행).</p>
-    <details class=more><summary>다운로드 파일 형식</summary><p class=muted style="margin-top:6px">
-    <b>LeRobotDataset v3.0</b> 폴더를 그대로 tar 로 감싼 것입니다 (압축 없음).
-    <span class=mono>tar xf 이름_v3.0.tar</span> 로 풀면 lerobot 에서
-    <span class=mono>LeRobotDataset(repo_id, root=풀린폴더)</span> 로 바로 열립니다.</p></details>
-    <div class=card style="margin-top:14px"><div class=formgrid>
+    <details class=more><summary>데이터셋 가져오기 · 파일 형식</summary>
+    <div class=card style="margin-top:8px"><div class=formgrid>
       <label class=f style="min-width:320px">데이터셋 가져오기 (.tar / .zip)
         <input type=file id=upf accept=".tar,.gz,.tgz,.zip"></label>
       <button class=primary onclick="upload('dataset')">가져오기</button><span class=muted id=upmsg></span></div>
-      <p class=muted style="margin:6px 0 0">위 다운로드 파일이나 meta/info.json 이 든 LeRobot 데이터셋 폴더를 묶은 파일. 같은 이름이 있으면 _2 를 붙입니다.</p></div>
+      <p class=muted style="margin:6px 0 0">다른 OpenMimic 에서 다운로드한 파일이나 meta/info.json 이 든 LeRobot 데이터셋 폴더를 묶은 파일. 같은 이름이 있으면 _2 를 붙입니다.</p>
+      <p class=muted style="margin:6px 0 0">다운로드 파일은 <b>LeRobotDataset v3.0</b> 폴더를 그대로 tar 로 감싼 것입니다 (압축 없음).
+      <span class=mono>tar xf 이름_v3.0.tar</span> 로 풀면 lerobot 에서
+      <span class=mono>LeRobotDataset(repo_id, root=풀린폴더)</span> 로 바로 열립니다.</p></div></details>
     </div>
     <script>
     {UPLOAD_JS}
@@ -3666,7 +3698,7 @@ def collect_page(resume: str = ""):
     그 화면에서 <b>녹화 시작</b>을 눌러야 그때부터 기록됩니다. 한 에피소드를 끝낼 때마다 다시 대기로 돌아옵니다.<br>
     목표 에피소드 수는 진행률 표시용입니다 — 도달해도 멈추지 않으니 <b>수집 끝내기</b>로 마치세요.
     에피소드 최대(초)가 지나면 자동으로 저장 단계로 넘어갑니다.<br>
-    카메라: <span class=mono>{esc(", ".join(CAM_SPECS)) or '없음 — <a href="/setup#cameras">셋업 › 카메라</a>에서 등록'}</span></p>
+    카메라: <span class=mono>{esc(", ".join(CAM_SPECS)) or '없음 — <a href="/setup#cameras">로봇 › 포트·카메라</a>에서 등록'}</span></p>
     </div></div>
     <script>
     const RESUME={js(resume if safe_name(resume) else "")};
@@ -3712,7 +3744,7 @@ def _preflight_ports():
             port = arm.get(f"{role}_port") or ""
             tag = f"{side}/{role}" if BIMANUAL else role
             if not port_present(port):
-                bad.append(f"{tag}: {port or '(미지정)'} 가 없습니다 — USB 를 다시 꽂고 셋업 탭에서 재지정")
+                bad.append(f"{tag}: {port or '(미지정)'} 가 없습니다 — USB 를 다시 꽂고 로봇 › 포트·카메라에서 재지정")
                 continue
             try:
                 ids = probe_port(port).get("ids") or []
@@ -3792,7 +3824,7 @@ async def api_record(req: Request):
         return JSONResponse({"error": "캘리브레이션 없음: " + ", ".join(missing) + " — 캘리브레이션 탭에서 먼저"},
                             status_code=400)
     if not CAM_SPECS:
-        return JSONResponse({"error": "카메라가 등록되지 않았습니다 — 셋업 탭에서 추가하세요"}, status_code=400)
+        return JSONResponse({"error": "카메라가 등록되지 않았습니다 — 로봇 › 포트·카메라에서 추가하세요"}, status_code=400)
     # 워커를 띄우기 전에 포트를 먼저 열어 봅니다. 여기서 안 걸러내면 워커가
     # connect 단계에서 막히고, 화면에는 "준비 중…" 만 남습니다.
     # probe_port 는 시리얼을 실제로 여는 블로킹 호출이라 반드시 스레드로 —
@@ -3991,7 +4023,7 @@ FAILURE_HINTS = [
     (r"could not open port|No such file or directory: '/dev|Failed to open port|SerialException",
      "시리얼 포트를 열지 못했습니다 — 포트 경로(Setup), USB 연결, 다른 프로그램(제어 탭 등)이 잡고 있는지 확인하세요."),
     (r"failed to set (capture_(width|height)|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — Setup 카메라 설정을 바꾸세요."),
-    (r"failed to set fourcc", "카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 셋업 › 카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요."),
+    (r"failed to set fourcc", "카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 로봇 › 포트·카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요."),
     (r"OpenCVCamera.*(read failed|Timed out|timeout|not connected)|frames? too old|Failed to capture",
      "카메라 프레임을 못 받았습니다 — 카메라 연결, USB 대역폭(허브에 여러 대), 다른 프로그램 점유를 확인하세요."),
     (r"Mismatch between calibration|EOFError", "캘리브레이션 파일과 모터 값이 다릅니다 — 캘리브레이션 탭에서 다시 캘리브레이션하세요."),
@@ -4751,32 +4783,37 @@ def models_page():
             ov = {"ok": '<span class="badge b-ok">OV✓</span>', "stale": '<span class="badge b-warn">OV 다시 변환</span>'}.get(c["ov"], '<span class=muted>-</span>')
             bad = not robot_type_ok(c["robot_type"])
             rate = f'{t["rate"]}% ({t["ok"]}/{t["n"]})' if t["n"] else "-"
+            menu = row_menu(([] if bad else [("OpenVINO 변환", None, f"ovPick({jsattr(c['rel'])})", False, "")])
+                            + [("내보내기", f"/api/model/download?ckpt={c['rel']}", None, False, "다른 기기로 옮길 파일 (.tar)"),
+                               ("삭제", None, f"delCk({jsattr(c['rel'])},'step')", True, "")])
             rows += (f'<tr><td class=mono>{esc(c["step"])}</td><td>{ov}</td>'
                      f'<td class=num>{rate}</td>'
                      f'<td style="text-align:right;white-space:nowrap">'
                      + (f'<span class="badge b-warn">{esc(c["robot_type"])} — 모드 불일치</span> ' if bad else
                         f'<a class=btnlink href="/rollout?ckpt={esc(c["rel"])}">실행</a> ')
-                     + (f'<button onclick="ovPick({jsattr(c["rel"])})">OpenVINO 변환</button> ' if not bad else '')
-                     + f'<a class=btnlink href="/api/model/download?ckpt={esc(c["rel"])}" download>내보내기</a> '
-                     f'<button class=danger onclick="delCk({jsattr(c["rel"])},\'step\')">삭제</button></td></tr>')
+                     + f'{menu}</td></tr>')
         acts = ""
         if ri["resumable"]:
             acts += (f'<button onclick="resume({jsattr(r)},{jsattr(ri["done_step"] or 0)},{jsattr(ri["steps"] or 0)})">'
                      f'이어서 학습</button> ')
         if ri["alive"]:
             acts += '<a class=btnlink href="/train">학습 화면</a> '
-        acts += f'<button class=danger onclick="delCk({jsattr(ri["checkpoints"][-1]["rel"] if ri["checkpoints"] else r + "/checkpoints/x")},\'run\',{jsattr(r)})">전체 삭제</button>'
+        last_rel = ri["checkpoints"][-1]["rel"] if ri["checkpoints"] else r + "/checkpoints/x"
+        acts += row_menu([("모델 전체 삭제", None, f"delCk({jsattr(last_rel)},'run',{jsattr(r)})", True, "")])
         cards += (f'<div class=card style="margin-bottom:12px"><div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
                   f'<b class=mono style="font-size:15px">{esc(r)}</b> {badges}<span style="flex:1"></span>{acts}</div>'
                   f'<p class=muted style="margin:6px 0 8px">{meta}</p>'
                   f'<table><tr><th>체크포인트</th><th>OpenVINO</th><th class=num>실기 성공률</th><th></th></tr>{rows}</table></div>')
-    empty = '' if runs else '<p class=muted>학습된 모델이 없습니다 — 학습 탭에서 학습하거나, 다른 기기에서 내보낸 모델을 가져오세요.</p>'
+    empty = '' if runs else ('<div class=card><p class=muted style="margin:0">학습된 모델이 없습니다 — '
+                             '<a href="/train">새 학습</a>을 시작하거나, 아래에서 다른 기기의 모델을 가져오세요.</p></div>')
     pmodels = mine
     ov_cks = sorted(list_checkpoints(), key=lambda c: c.split("/checkpoints/")[0] not in pmodels)
     ov_opts = "".join(f'<option value="{esc(c)}">{esc(c)}{esc(ov_label(c))}</option>' for c in ov_cks)
     return f"""{CSS}{nav_html('md')}<div class=wrap>
     <p class=eyebrow>학습한 모델</p><h2>모델</h2>
-    <div class=card style="margin-bottom:14px">
+    {empty}{cards}
+    <details class=more style="margin-top:6px"><summary>다른 기기의 모델 가져오기</summary>
+    <div class=card style="margin-top:8px">
       <div class=formgrid>
         <label class=f style="min-width:320px">모델 가져오기 (.tar / .zip)
           <input type=file id=upf accept=".tar,.gz,.tgz,.zip"></label>
@@ -4785,13 +4822,12 @@ def models_page():
       </div>
       <p class=muted style="margin:6px 0 0">다른 기기의 <b>내보내기</b> 파일(예: Intel NPU 기기에서 추론할 모델을 NVIDIA Thor 에서 학습한 경우)을 그대로 넣으면
       같은 폴더 구조로 들어옵니다. OpenVINO 변환본이 들어 있으면 같이 옵니다.</p>
-    </div>
-    {empty}{cards}
+    </div></details>
     <p class=eyebrow style="margin-top:22px" id=ov>OpenVINO 변환 · Intel NPU / GPU / CPU</p>
     <div class=card>
-      <p class=muted>학습이 끝난 체크포인트를 OpenVINO 로 바꾸고, 이 기기의 장치마다 PyTorch 결과와의 오차·추론 시간을 잽니다.
-      변환 결과는 체크포인트 폴더 안 <span class=mono>openvino/</span> 에 저장되고, 실행 탭에서 추론 엔진으로 고를 수 있습니다.
-      카메라 해상도는 학습 데이터 기준으로 고정됩니다.</p>
+      <p class=muted style="margin-top:0">체크포인트를 OpenVINO 로 바꾸고 이 기기의 장치마다 오차·추론 시간을 잽니다. 변환본은 실행 탭에서 추론 엔진으로 고릅니다.</p>
+      <details class=more><summary>자세히 보기</summary><p class=muted style="margin-top:6px">PyTorch 결과와 비교해 오차를 잽니다.
+      변환 결과는 체크포인트 폴더 안 <span class=mono>openvino/</span> 에 저장됩니다. 카메라 해상도는 학습 데이터 기준으로 고정됩니다.</p></details>
       <div class=formgrid>
         <label class=f style="min-width:380px">체크포인트
           <select id=ovck onchange="ovRefresh()">{ov_opts}</select></label>
@@ -7130,7 +7166,7 @@ async def api_wizard_robot(req: Request):
 
 @app.get("/setup/wizard", response_class=HTMLResponse)
 def wizard_page():
-    r = HTMLResponse(CSS + nav_html("st") + WIZARD_HTML)
+    r = HTMLResponse(CSS + nav_html("wz") + WIZARD_HTML)
     r.set_cookie(WIZ_COOKIE, "1", max_age=365 * 86400, samesite="lax")
     return r
 
@@ -7913,9 +7949,8 @@ function paintAfter(){
   $('after').innerHTML='<div class=card style="margin-top:16px">'
     +(all?'<p class="badge b-ok" style="margin-top:0">모든 팔 준비 완료 — 제어 탭에서 연결해 보세요</p>':'')
     +'<p style="margin-top:0"><b>카메라</b> — '+(W.cameras.length?W.cameras.length+'대 등록 ('+E(W.cameras.join(', '))+')':'아직 없음')
-    +' · <a href="/setup#cameras">셋업 › 3 · 카메라</a>에서 화면으로 확인하고 추가하세요.</p>'
-    +'<p style="margin-bottom:0"><b>환경</b> — 지금 구성은 <span class=mono>'+E(W.env)+'</span> 환경에 저장돼 있습니다 · '
-    +'<a href="/setup#envcard">환경 관리</a> (작업대가 여러 개면 이름을 나눠 두세요)</p></div>';
+    +' · <a href="/setup#cameras">로봇 › 포트·카메라</a>에서 화면으로 확인하고 추가하세요.</p>'
+    +'<p style="margin-bottom:0"><b>다음 단계</b> — <a href="/collect">데이터 › 수집</a>에서 리더 팔로 시연을 녹화합니다</p></div>';
 }
 
 async function openSlot(side,role,step){
@@ -8291,24 +8326,11 @@ SETUP_HTML = """
 .stagebox .inst{color:var(--muted);margin:0 0 12px;line-height:1.7}
 </style>
 <div class=wrap>
-<p class=eyebrow>하드웨어 설정</p><h2>셋업</h2>
+<p class=eyebrow>하드웨어 설정</p><h2>포트·카메라</h2>
 <div id=busywarn></div>
 <div class="card needcard wizcard"><div class=needtxt><b>처음이거나 팔을 새로 연결했다면 — 셋업 마법사</b>
-  <span class=muted>팔 하나씩 포트 찾기 → 진단 → 캘리브레이션 → 3D 확인 순서로 안내합니다.
-  이 화면은 카메라·환경 등록과 세부 설정용입니다.</span></div>
+  <span class=muted>포트 찾기 → 진단 → 캘리브레이션 → 3D 확인을 팔 하나씩 안내합니다. 이 화면은 카메라 등록과 세부 설정용입니다.</span></div>
   <a class="btnlink primary" href="/setup/wizard">셋업 마법사 시작</a></div>
-
-<p class=eyebrow id=envcard>0 · 환경</p>
-<div class=card>
-  <p class=muted style="margin-top:0">환경은 하드웨어 구성 한 벌입니다 — 한팔/양팔, 포트, 캘리브 id, 카메라, fps.
-  아래에서 <b>설정 저장</b>을 누르면 <b>사용 중인 환경</b>에 반영됩니다. 작업대나 팔 세트가 여러 개면 환경을 나눠 두고 전환하세요.
-  수집한 데이터셋에는 어느 환경으로 찍었는지 기록됩니다.</p>
-  <table id=envtbl></table>
-  <div class=toolbar style="margin-top:10px">
-    <button onclick="envSaveAs()">저장된 지금 구성을 새 환경으로 복사</button>
-    <span class=muted id=envmsg></span>
-  </div>
-</div>
 
 <p class=eyebrow>1 · 기종 · 모드</p>
 <div class=toolbar>
@@ -8327,14 +8349,14 @@ SETUP_HTML = """
   <div class=toolbar>
     <button onclick="withBusy(this,loadPorts)">다시 스캔</button>
     <button id=bwatch class=primary onclick="withBusy(this,toggleWatch)">포트 감시 시작 (팔 판별)</button>
-    <span class=muted>감시를 켜고 팔 하나를 손으로 움직이면 그 포트의 travel 이 올라갑니다.
-      전기적으로는 leader/follower 를 구분할 수 없어서, 이게 확실한 판별 방법입니다.</span>
+    <span class=muted>감시를 켜고 팔 하나를 손으로 움직이면 그 포트의 travel 이 올라갑니다.</span>
     <p class="badge b-warn" style="margin:8px 0 0">감시는 모든 포트의 토크를 끕니다 —
       팔로워가 들려 있으면 그대로 주저앉습니다. 팔을 받치거나 내려놓고 시작하세요.</p>
   </div>
   <table id=porttbl></table>
   <details class=more style="margin-top:10px"><summary>자세히 — travel · probe · 포트 경로(by-id / by-path)</summary>
   <p class=muted style="margin-top:6px">
+    전기적으로는 leader/follower 를 구분할 수 없어서, 손으로 움직여 보는 것이 확실한 판별 방법입니다.
     travel = 감시 시작 이후 엔코더가 움직인 최대 폭(tick, 4096 = 1바퀴).
     probe 는 1 Mbps 기본 보드레이트만 봅니다 — 응답이 없으면 <b>전체 스캔</b>으로 보드레이트를 찾으세요.
     <b>1,2,3,4,5,6</b> 이 다 뜨면 모터 ID 세팅은 건너뛰어도 됩니다.<br>
@@ -8379,41 +8401,58 @@ SETUP_HTML = """
 <div class=card>
   <div class=toolbar>
     <button onclick="withBusy(this,loadCams)">카메라 스캔</button>
-    <span class=muted>연결된 카메라를 전부 열어 한 장씩 찍습니다 — <b>어느 장치가 어느 카메라인지 화면으로 확인</b>하세요.
-      카메라 수에 따라 몇 초 걸리고, 제어·수집 중에는 막힙니다.
-      카메라도 같은 규칙입니다 — 시리얼 번호가 있으면 by-id, 없으면(같은 모델 2개가 겹침) by-path 라 그때는 같은 USB 구멍에 꽂아야 합니다.</span>
+    <span class=muted>연결된 카메라를 한 장씩 찍어 보여 줍니다 — 어느 장치가 어느 카메라인지 화면으로 확인하세요.</span>
   </div>
   <table id=camtbl></table>
   <div style="margin-top:16px">
     <p class=eyebrow>등록된 카메라</p>
     <table id=curcamtbl></table>
-    <p class=muted style="margin-top:8px">양팔이면 팔 카메라 키에 <span class=mono>left_</span> /
+    <details class=more style="margin-top:8px"><summary>자세히 — 장치 경로 · 양팔 카메라 이름</summary>
+    <p class=muted style="margin-top:6px">스캔은 카메라 수에 따라 몇 초 걸리고, 제어·수집 중에는 막힙니다.
+    시리얼 번호가 있는 카메라는 by-id, 없으면(같은 모델 2개가 겹침) by-path 라 그때는 같은 USB 구멍에 꽂아야 합니다.
+    양팔이면 팔 카메라 키에 <span class=mono>left_</span> /
     <span class=mono>right_</span> 접두사가 붙고, 공용 카메라(top)는 접두사 없이 그대로 갑니다 —
-    lerobot <span class=mono>bi_so_follower</span> 규칙과 같습니다.</p>
+    lerobot <span class=mono>bi_so_follower</span> 규칙과 같습니다.</p></details>
   </div>
 </div>
 
 <p class=eyebrow>4 · 기타</p>
 <div class=card>
   <div class=formgrid>
-    <label class=f>로봇 id (robot_id) <input id=robot_id size=12></label>
     <label class=f>초당 프레임 (fps) <input id=fps size=5></label>
-    <label class=f title="SO-ARM101 은 °, OMX 는 -100~100 단위 (1 ≈ 1.8°)">한 번에 움직일 최대 크기 (max_relative_target · SO: ° / OMX: 1≈1.8°, 비우면 미사용) <input id=mrt size=6></label>
     <label class=f style="flex:1;min-width:240px">기본 태스크 설명 <input id=task></label>
+  </div>
+  <details class=more style="margin-top:10px"><summary>고급 — robot_id · 한 번에 움직일 최대 크기 · 캘리브레이션 파일 위치</summary>
+  <div class=formgrid style="margin-top:8px">
+    <label class=f>로봇 id (robot_id) <input id=robot_id size=12></label>
+    <label class=f title="SO-ARM101 은 °, OMX 는 -100~100 단위 (1 ≈ 1.8°)">한 번에 움직일 최대 크기 (max_relative_target · SO: ° / OMX: 1≈1.8°, 비우면 미사용) <input id=mrt size=6></label>
   </div>
   <div id=calib></div>
   <p class=muted id=platinfo style="margin:8px 0 0"></p>
+  </details>
 </div>
 
 <div class=toolbar>
   <button class=primary onclick="save()">설정 저장 &amp; 적용</button>
   <span class=muted id=savemsg></span>
 </div>
+
+<details class=adv id=envcard style="margin-top:22px"><summary>고급 — 장비 구성(환경) 파일 관리</summary>
+<div class=card>
+  <p class=muted style="margin-top:0">프로젝트를 만들면 같은 이름의 장비 구성(포트·캘리브 id·카메라·fps)이 자동으로 생기고, 프로젝트를 열면 그 구성으로 바뀝니다.
+  보통은 손댈 필요가 없습니다. 위의 설정 저장은 지금 쓰는 구성에 반영됩니다.</p>
+  <table id=envtbl></table>
+  <div class=toolbar style="margin-top:10px">
+    <button onclick="envSaveAs()">저장된 지금 구성을 새 환경으로 복사</button>
+    <span class=muted id=envmsg></span>
+  </div>
+</div></details>
 <details class=more><summary>현재 설정 파일 보기 (openmimic_config.json)</summary><pre id=cfgdump></pre></details>
 </div>
 <script>
 let CFG=null, PORTS=[], VCAMS=[], WATCHING=false, timer=null, LASTWATCH=null;
 const $=id=>document.getElementById(id);
+if(location.hash==='#envcard'){ const ec=$('envcard'); if(ec) ec.open=true; }   // 예전 링크(/setup#envcard)로 오면 고급 칸을 펼침
 const E=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const dirty=m=>{ $('savemsg').innerHTML='<span class=b-warn>'+E(m)+' — 저장 버튼을 눌러야 적용됩니다</span>'; };
 
@@ -8524,7 +8563,10 @@ function renderArms(){
     const note=document.createElement('span'); note.className='tiny';
     note.textContent='3D 화면 표시용 — 제어·데이터에는 영향 없음';
     vr.appendChild(note);
-    d.appendChild(vr);
+    const vd=document.createElement('details'); vd.className='more';
+    vd.innerHTML='<summary>3D 배치 (화면 표시용)</summary>';
+    vd.appendChild(vr);
+    d.appendChild(vd);
     box.appendChild(d);
   });
 }
@@ -9125,7 +9167,7 @@ class CalibSession:
             raise RuntimeError(f"알 수 없는 팔: {side}")
         port = arm.get(f"{role}_port")
         if not port:
-            raise RuntimeError(f"{side}/{role} 포트가 지정되지 않았습니다 — 셋업 탭에서 먼저 설정하세요")
+            raise RuntimeError(f"{side}/{role} 포트가 지정되지 않았습니다 — 로봇 › 포트·카메라에서 먼저 설정하세요")
         self._reset()
         self.side, self.role = side, role
         if kind()["calib"] != "range":
@@ -9561,10 +9603,10 @@ td.mono{font-variant-numeric:tabular-nums}
 <div id=busywarn></div>
 <div id=picker></div>
 <div id=stage></div>
-<p class=eyebrow style="margin-top:26px">캘리브레이션 파일 모음</p>
-<div class=dev>
-  <p class=muted style="margin-top:0">이 PC 에 있는 모든 팔의 캘리브레이션 파일입니다. 팔 세트가 여러 개면 셋업에서 캘리브 id 를 세트마다 다르게
-  (예: <span class=mono>b2_follower_left</span>) 두고 환경으로 저장해 바꿔 쓰세요. <b>내보내기</b> 한 zip 을 다른 PC 의 <b>가져오기</b> 로 넣으면 그대로 옮겨집니다.</p>
+<details class=more style="margin-top:26px"><summary>캘리브레이션 파일 모음 — 내보내기 · 가져오기 · 삭제</summary>
+<div class=dev style="margin-top:8px">
+  <p class=muted style="margin-top:0">이 PC 에 있는 모든 팔의 캘리브레이션 파일입니다. 프로젝트마다 캘리브 id 가 따로라 같은 팔도 프로젝트별 파일이 생깁니다.
+  <b>내보내기</b> 한 zip 을 다른 PC 의 <b>가져오기</b> 로 넣으면 그대로 옮겨집니다.</p>
   <div id=cfiles class=muted>…</div>
   <div class=row style="margin-top:10px;align-items:center">
     <a class=btnlink href="/api/calib/export" download><button type=button>내보내기 (zip)</button></a>
@@ -9572,7 +9614,7 @@ td.mono{font-variant-numeric:tabular-nums}
     <button type=button id=calimp>가져오기</button>
     <span id=calmsg class=muted></span>
   </div>
-</div>
+</div></details>
 </div>
 <script>
 const $=id=>document.getElementById(id);
@@ -10496,29 +10538,56 @@ document.addEventListener('keydown',e=>{
 
 
 # ----------------------------- 페이지: Jobs ----------------------------------
+JOBS_RECENT = 10        # 작업 탭에 펼쳐 보이는 끝난 작업 수 — 나머지는 접어 둡니다
+# 일괄 지우기에서 남기는 작업 — 학습 그래프·모델의 학습 이력·실행 기록·OpenVINO 변환 결과가 이 기록을 읽습니다
+JOBS_KEEP_KINDS = ("train", "cloudtrain", "rollout", "ovconvert")
+
+
 @app.get("/jobs", response_class=HTMLResponse)
 def jobs_page():
-    rows = ""
-    for j in jobs_index():
+    jobs = [j for j in jobs_index() if j["kind"] != "sim"]       # 예전 판의 가상 장치 작업은 숨김
+    jobs.sort(key=lambda j: j.get("started", ""), reverse=True)
+    live = [j for j in jobs if j["alive"]]
+    done = [j for j in jobs if not j["alive"]]
+
+    def _row(j):
+        label = JOB_KIND_LABEL.get(j["kind"], j["kind"])
         if j["alive"]:
-            st = '<span class="badge b-run">running</span>'
+            st = '<span class="badge b-run"><span class=jobk>실행 중</span></span>'
             act = f'<button class=danger onclick="kill({jsattr(j["id"])})">중지</button>'
         else:
-            st = '<span class="badge b-ok">done</span>'
-            act = f'<button onclick="delJob({jsattr(j["id"])})">삭제</button>'
-        rows += (f'<tr><td class=mono>{esc(j["id"])}</td><td>{esc(j["kind"])}</td><td>{st}</td>'
-                 f'<td class=mono style="color:var(--muted)">{esc(j.get("started", ""))}</td>'
-                 f'<td style="text-align:right"><a href="/jobs/{esc(j["id"])}">log</a> &nbsp;{act}</td></tr>')
-    empty = '' if rows else '<tr><td colspan=5 class=muted>작업 기록 없음</td></tr>'
+            st = '<span class=badge><span class=jobk>끝남</span></span>'
+            act = row_menu([("로그 보기", f"/jobs/{j['id']}", None, False, ""),
+                            ("기록 삭제", None, f"delJob({jsattr(j['id'])})", True, "")])
+        return (f'<tr><td><a href="/jobs/{esc(j["id"])}" class=mono title="로그 보기">{esc(j["id"])}</a></td>'
+                f'<td><span class=jobk>{esc(label)}</span></td><td>{st}</td>'
+                f'<td class=mono style="color:var(--muted)">{esc(j.get("started", ""))}</td>'
+                f'<td style="text-align:right">{act}</td></tr>')
+    head = '<tr><th>ID</th><th>종류</th><th>상태</th><th>시작</th><th></th></tr>'
+    body = "".join(_row(j) for j in live + done[:JOBS_RECENT])
+    if not body:
+        body = '<tr><td colspan=5 class=muted>작업 기록 없음</td></tr>'
+    older = ""
+    if len(done) > JOBS_RECENT:
+        older = (f'<details class=more style="margin-top:10px"><summary>이전 작업 보기 ({len(done) - JOBS_RECENT})</summary>'
+                 f'<div class=card style="margin-top:8px"><table>{head}'
+                 + "".join(_row(j) for j in done[JOBS_RECENT:]) + '</table></div></details>')
+    ndel = sum(1 for j in done if j["kind"] not in JOBS_KEEP_KINDS)
+    clear = (f'<button onclick="clearDone()">끝난 작업 기록 지우기 ({ndel})</button>' if ndel else '')
     return f"""{CSS}{nav_html('jb')}<div class=wrap>
     <p class=eyebrow>백그라운드 작업</p><h2>작업</h2>
-    <div class=card><table>
-    <tr><th>ID</th><th>종류</th><th>상태</th><th>시작</th><th></th></tr>{rows}{empty}</table></div>
-    <p class=muted>중지 1회 = 정상 종료(SIGINT) · 한 번 더 = 강제종료 · 삭제 = 기록·로그 제거 (끝난 작업만)</p></div>
+    <div class=toolbar style="margin-bottom:10px">{clear}
+      <span class=muted>ID 를 누르면 로그 · 중지 1회 = 정상 종료, 한 번 더 = 강제 종료</span></div>
+    <div class=card><table>{head}{body}</table></div>{older}</div>
     <script>
     async function kill(id){{ await fetch('/api/kill/'+id,{{method:'POST'}}); setTimeout(()=>location.reload(),1500); }}
     async function delJob(id){{ await fetch('/api/deljob/'+id,{{method:'POST'}}); location.reload(); }}
-    setTimeout(()=>location.reload(), 10000);
+    async function clearDone(){{
+      if(!confirm('끝난 수집·편집·업로드 작업의 기록과 로그를 지웁니다. 학습·실행·변환 기록은 모델 화면에서 쓰므로 남깁니다. 계속할까요?')) return;
+      const d=await (await fetch('/api/deljobs_done',{{method:'POST'}})).json();
+      if(d.error) alert(d.error); location.reload();
+    }}
+    {'setTimeout(()=>location.reload(), 5000);' if live else ''}
     </script>"""
 
 
@@ -10552,6 +10621,13 @@ def api_kill(jid: str, force: int = 0):
 def api_deljob(jid: str):
     ok = delete_job(jid)
     return {"ok": ok} if ok else JSONResponse({"error": "실행 중인 작업"}, status_code=400)
+
+
+@app.post("/api/deljobs_done")
+def api_deljobs_done():
+    """끝난 작업 기록·로그를 한 번에 지웁니다. 실행 중인 작업은 delete_job 이 거절하고, JOBS_KEEP_KINDS 는 남깁니다."""
+    n = sum(1 for j in jobs_index() if not j["alive"] and j["kind"] not in JOBS_KEEP_KINDS and delete_job(j["id"]))
+    return {"ok": True, "deleted": n}
 
 
 # ----------------------------- 비디오 서빙 -----------------------------------

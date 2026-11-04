@@ -15,7 +15,7 @@ The screen switches between Korean and English with the **한/EN** button in the
 
 ## First setup — setup wizard
 
-**Setup → Start setup wizard**. Choose the arm type and single/bimanual at the top, then click each arm box (four for bimanual); it resumes from the first unfinished step.
+**Robot › Setup wizard**. Choose the arm type and single/bimanual at the top, then click each arm box (four for bimanual); it resumes from the first unfinished step.
 No step drives the motors — everything is checked **by moving the arm by hand**.
 
 1. **Find port** — start watching and move only that arm by hand; the port that moved is suggested in green. ⚠️ Torque is off while watching, so support the follower
@@ -35,38 +35,49 @@ No step drives the motors — everything is checked **by moving the arm by hand*
 > ⚡ **Power first** — do not swap the follower and leader power adapters. Check the rated voltage on the servo label or kit spec
 > (the STS3215 comes in separate 7.4 V and 12 V versions). If the voltage in the diagnose step differs from the adapter, stop there.
 
-For cameras, scan in **Setup → 3 · Cameras**; each device takes a thumbnail so you can see which camera is which before registering it.
+For cameras, scan in **Robot › Ports & cameras → 3 · Cameras**; each device takes a thumbnail so you can see which camera is which before registering it.
 
 ## Using each screen
 
-The tabs at the top follow the work order: **Setup · Calibration · Control · Collect · Datasets · Training · Models · Rollout**,
-with Projects · Hub · Jobs under **More**. If something has to be done first (e.g. no port set, no dataset),
-the start button on that screen is disabled and a **large button shows where to go**.
+The four main tabs at the top follow the work order: **Robot · Data · Training · Rollout**. Sub-tabs appear right below the selected tab.
 
-### Setup
+| Main tab | Sub-tabs |
+|---|---|
+| Robot | Setup wizard · Ports & cameras · Calibration · Control |
+| Data | Datasets · Collect |
+| Training | New training · Models |
+| Rollout | — |
+| More | Projects · Hub · Jobs |
 
-**Start setup wizard** at the top is the way to connect arms the first time; this screen is for registering cameras and environments and for detailed settings.
+- Each list row shows one button (e.g. **Run** on a model); the rest, such as download, export and delete, are in the **⋯** menu at the end of the row
+- Rarely used settings and long explanations are folded under **▸**
+- The chip at the top right is the open **project** (with single/bimanual); **Port not set** appears only when ports are empty
+- If something has to be done first (e.g. no port set, no dataset), the start button on that screen is disabled and a **large button shows where to go**
+
+### Robot › Ports & cameras
+
+The **Setup wizard** guides the first connection; this screen is for registering cameras and detailed settings.
 
 | Section | What it does |
 |---|---|
-| 0 · Environment | Save and switch named hardware configurations (arm type · mode · ports · calibration ids · cameras) |
-| 1 · Robot model · Mode | SO-ARM101 / OMX, single / bimanual. Per-arm port · calibration id · 3D placement |
+| 1 · Robot model · Mode | SO-ARM101 / OMX, single / bimanual. Per-arm port · calibration id (3D placement is folded) |
 | 2 · USB serial ports | Port scan, **Port watch** to tell leader from follower. Motor ID setup and arm check are in the folded sections (2b · 2c) |
 | 3 · Cameras | Scan (thumbnails) · register, resolution · fps · format — use **MJPG** if several USB cameras on one hub drop out |
-| 4 · Other | fps, max move per step (`max_relative_target`), default task |
+| 4 · Other | fps, default task. The folded **Advanced** holds robot_id · max move per step (`max_relative_target`) · calibration file location |
 
-Changes take effect after **Save settings**.
+Changes take effect after **Save settings**. The folded **Advanced — manage configuration (environment) files** at the bottom is only for
+working directly with the configuration files that each project creates automatically.
 
 ![Setup](img/setup.png)
 
-### Calibration
+### Robot › Calibration
 
 Use it to calibrate on its own and to **manage calibration files**. ⚠️ Torque turns off when it starts — support the follower.
-**Calibration files** below lists every arm file on this PC, with zip **Export / Import**. Remove unused files with **Delete** (a copy is kept as `.json.bak` in the same folder).
+The folded **Calibration files** section below lists every arm file on this PC, with zip **Export / Import**. Remove unused files with **Delete** (a copy is kept as `.json.bak` in the same folder).
 
 ![Calibration](img/calib.png)
 
-### Control
+### Robot › Control
 
 Manual control of the follower. It connects when you open the tab and turns torque off and disconnects when you leave.
 
@@ -76,7 +87,7 @@ Manual control of the follower. It connects when you open the tab and turns torq
 
 ![Control](img/control.png)
 
-### Collect
+### Data › Collect
 
 Enter the collection settings and start. **Recording does not start by itself** — start it with a key while waiting.
 
@@ -95,19 +106,19 @@ Enter the collection settings and start. **Recording does not start by itself** 
 |---|---|
 | ![](img/collect.png) | ![](img/collect_run.png) |
 
-### Datasets
+### Data › Datasets
 
 The home screen. The **Getting started** guide at the top shows the remaining steps (it disappears when done or hidden); the dataset list is below.
 Click a name to open the review screen — all cameras played on one clock, 3D playback and joint graphs.
 
 - ← / → episode, Space play, **, / .** one frame, **X** mark bad → delete in bulk (edited in place; the original is backed up to `<name>_old`)
-- Download · **Import** from another device · **Repair** an interrupted dataset
+- The **⋯** at the end of a row has review · download · delete. Click the red **Not finalized · Repair** to repair an interrupted dataset. **Import** from another device is in the folded section below the list
 
 | List | Review |
 |---|---|
 | ![](img/datasets.png) | ![](img/review.png) |
 
-### Training
+### Training › New training
 
 Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate graphs and **progress · time left** are shown live.
 
@@ -127,10 +138,10 @@ Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate g
 
 ![Training](img/training.png)
 
-### Models
+### Training › Models
 
 One card per trained model — steps, last loss, **real-arm success rate**, OpenVINO conversion status.
-Each checkpoint has **Run · OpenVINO convert · Export · Delete**, each card has **Resume training**. **Import** a model from another device at the top.
+Each checkpoint has a **Run** button and **⋯** (OpenVINO convert · Export · Delete), each card has **Resume training**. **Import** a model from another device is in the folded section below the list.
 
 ![Models](img/models.png)
 
@@ -154,7 +165,7 @@ Choose a checkpoint and run autonomously. Before starting, cameras and joint cou
   and new datasets and models are added to it automatically. Deleting a project deletes its environment too (datasets, models and calibration files are kept).
   Everything else works without one.
 - **Hub** — exchange with the Hugging Face Hub: login (token), upload datasets, download datasets and models, check and cancel **HF Jobs cloud training**.
-- **Jobs** — background jobs such as collection, training and rollout, with logs. They can be stopped here.
+- **Jobs** — background jobs such as collection, training and rollout. Click an ID for its log, **Stop** a running one. Only the 10 most recent finished jobs are shown open; **Clear finished job records** keeps training, rollout and conversion records (the Models page uses them) and removes the rest.
 
 | Projects | Hub |
 |---|---|
@@ -163,12 +174,14 @@ Choose a checkpoint and run autonomously. Before starting, cameras and joint cou
 ## Several arm sets
 
 Calibration files are saved under the **calibration id**. Give each set a different id and the files never mix.
+The easiest way is a separate **project** per set (bench) — each project gets its own calibration ids and configuration, and opening the project switches to that set.
+To split them within one project:
 
-1. Label the arms (e.g. `b2`), change the calibration id in **Setup → 1 · Robot model · Mode** to something like `b2_follower_left`, then **Save settings**
+1. Label the arms (e.g. `b2`), change the calibration id in **Robot › Ports & cameras → 1 · Robot model · Mode** to something like `b2_follower_left`, then **Save settings**
    - Changing only the id of the same arm (same port) **copies the existing calibration file to the new name** automatically
    - For bimanual, the left and right arm of the same role must share the prefix (`b2_follower` + `_left` / `_right`)
-2. Save this configuration as e.g. `bench2` in **Setup → 0 · Environment** — from then on, switching the environment uses that set's files
-3. To move to another PC, use **Calibration → Export (zip)** → **Import** on the other PC. For SO-ARM101 you can also move just the arm and use **Import from board**
+2. Save this configuration as e.g. `bench2` in the folded **Advanced — manage configuration (environment) files** at the bottom of the same screen — from then on, switching the configuration uses that set's files
+3. To move to another PC, use **Robot › Calibration → Calibration files → Export (zip)** → **Import** on the other PC. For SO-ARM101 you can also move just the arm and use **Import from board**
 
 ## Running on an Intel NPU
 
@@ -210,10 +223,10 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | Windows: camera does not open | Settings → Privacy → **Camera**: allow desktop apps; check that no other program (video calls etc.) is using it |
 | Windows: collect rate warning | Camera format MJPG, spread cameras over different USB ports. If still low, the real-time scan exclusion in [INSTALL.md](INSTALL.md) |
 | Arms or cameras swap after a reboot (Windows) | Boards and cameras without a serial number follow the **USB socket** they are plugged into — always use the same socket. If cameras only show up by number, `pip install pygrabber` |
-| "No calibration file" | Setup wizard step ③ or the Calibration tab. For a file from another PC, Calibration → Import |
+| "No calibration file" | Setup wizard step ③ or Robot › Calibration. For a file from another PC, Calibration → Import |
 | No 3D view | The 3D library ships in the repo's `vendor/` folder, so no internet is needed. Check that the browser supports WebGL (hardware acceleration on) |
 | Using it without internet | Once installed, setup · collect · training · rollout all work offline (the install also downloads ACT's ResNet18 ImageNet weights). Only optional features need internet the first time — the SmolVLA pretrained model, ACT2's DINOv2 backbone, HF Jobs and the Hub. If the web fonts cannot be loaded, system fonts are used |
-| Several cameras drop out | Setup → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
+| Several cameras drop out | Robot › Ports & cameras → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
 | "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching environments work during training |
 | Collection ends right after starting | Read the error and log left on the collection screen. A new dataset with no saved episodes is removed automatically, so you can start again with the same name |
 | Dataset shows "not finalized" | **Repair** in the dataset list |
