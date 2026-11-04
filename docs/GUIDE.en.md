@@ -3,7 +3,7 @@
 <a href="GUIDE.md">한국어</a> · <b>English</b>
 
 For installation see [INSTALL.md](INSTALL.md) (Korean); for the overview see the [README](../README.en.md); for the Intel NPU see [INTEL.en.md](INTEL.en.md). This guide covers each screen and troubleshooting.
-The screen switches between Korean and English with the **한/EN** button in the top bar. The screenshots show the Korean screen.
+The screen switches between Korean and English with **☰ menu → 한국어 / English** at the top right. The screenshots show the Korean screen.
 
 - [First setup — setup wizard](#first-setup--setup-wizard)
 - [Using each screen](#using-each-screen)
@@ -132,8 +132,8 @@ Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate g
 - A dataset/policy mismatch is flagged in red **before starting** (camera resolution, single/bimanual, etc.)
 - 10 episodes and a few thousand steps only check the workflow. For the arm to actually grasp, you need **about 50 demos** and enough steps (tens of thousands) — that takes long on an integrated GPU, so HF Jobs is recommended
 - Choose **HF Jobs** under **Run on** to train on Hugging Face cloud GPUs (paid; the hourly price is shown in the list).
-  Enter a Hugging Face token in the Hub tab first; check the Hugging Face pricing pages for the conditions (plan, payment method).
-  Download the finished model in the Hub tab, convert it to OpenVINO and run it on this device's NPU
+  Enter a Hugging Face token in **Data › Hub** first; check the Hugging Face pricing pages for the conditions (plan, payment method).
+  Download the finished model in **Data › Hub**, convert it to OpenVINO and run it on this device's NPU
 - Details per policy: **[POLICIES.md](POLICIES.md)** (Korean)
 
 ![Training](img/training.png)
@@ -160,7 +160,6 @@ Choose a checkpoint and run autonomously. Before starting, cameras and joint cou
 ### Projects · Hub · Jobs
 
 Open projects from the project chip at the top right, the hub from **Data › Hub**, and jobs from **☰ → Jobs**.
-
 
 - **Projects** — groups one task (task description, its own environment, datasets, models). A new project creates an empty environment with the same name
   (only robot model and single/bimanual are set; ports and cameras are empty; calibration ids are project-specific such as `<project>_follower`)
@@ -190,8 +189,8 @@ To split them within one project:
 
 On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT · ACT2** models are converted to OpenVINO to run on the **NPU**.
 
-1. Training — train on this PC's integrated GPU (XPU, slow), or **Models → Import** a model trained on HF Jobs (cloud) or an NVIDIA device
-2. **Models → OpenVINO convert** (FP16 · INT8) — shows error and inference time for each of NPU · GPU · CPU
+1. Training — train on this PC's integrated GPU (XPU, slow), or import a model trained on HF Jobs (cloud) or an NVIDIA device with **Training › Models → Import a model from another device**
+2. **Training › Models → OpenVINO convert** (FP16 · INT8) — shows error and inference time for each of NPU · GPU · CPU
 3. **Rollout → inference engine: OpenVINO · NPU**
 
 Details and measurements: **[INTEL.en.md](INTEL.en.md)**
@@ -211,7 +210,7 @@ OpenMimic watches the points where low-cost servo arms actually fail: swapped ad
 
 ## Screen language — 한/EN
 
-The **한/EN** button in the top bar switches Korean ↔ English. Text you type yourself (task descriptions, etc.) is not translated.
+**☰ menu → 한국어 / English** at the top right switches Korean ↔ English. Text you type yourself (task descriptions, etc.) is not translated.
 
 ![English screen](img/english.png)
 
@@ -226,15 +225,15 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | Windows: camera does not open | Settings → Privacy → **Camera**: allow desktop apps; check that no other program (video calls etc.) is using it |
 | Windows: collect rate warning | Camera format MJPG, spread cameras over different USB ports. If still low, the real-time scan exclusion in [INSTALL.md](INSTALL.md) |
 | Arms or cameras swap after a reboot (Windows) | Boards and cameras without a serial number follow the **USB socket** they are plugged into — always use the same socket. If cameras only show up by number, `pip install pygrabber` |
-| "No calibration file" | Setup wizard step ③ or Robot › Calibration. For a file from another PC, Calibration → Import |
+| "No calibration file" | Setup wizard step ③ or Robot › Calibration. For a file from another PC, Robot › Calibration → Calibration files → Import |
 | No 3D view | The 3D library ships in the repo's `vendor/` folder, so no internet is needed. Check that the browser supports WebGL (hardware acceleration on) |
 | Using it without internet | Once installed, setup · collect · training · rollout all work offline (the install also downloads ACT's ResNet18 ImageNet weights). Only optional features need internet the first time — the SmolVLA pretrained model, ACT2's DINOv2 backbone, HF Jobs and the Hub. If the web fonts cannot be loaded, system fonts are used |
 | Several cameras drop out | Robot › Ports & cameras → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
-| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in ☰ → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching environments work during training |
+| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in ☰ → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching projects work during training |
 | Collection ends right after starting | Read the error and log left on the collection screen. A new dataset with no saved episodes is removed automatically, so you can start again with the same name |
-| Dataset shows "not finalized" | **Repair** in the dataset list |
+| Dataset shows "not finalized" | Click the red **Not finalized · Repair** in the dataset list |
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |
-| "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make the setup match training |
+| "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make **Robot › Ports & cameras** match training |
 | Screen looks wrong after an update | `./openmimic.sh restart` (on Windows `OpenMimic.bat restart`) + hard refresh in the browser (Ctrl+Shift+R) |
 | "The calibration folder is not the install folder …" at the top | It was started without `activate.sh`. Stop it and start again with `./openmimic.sh start` (on Windows `OpenMimic.bat`) |
 | "Power check failed — not started" | The leader and follower adapters are swapped or the voltage is outside the servo limit. **Disconnect power first** and check the adapter labels |

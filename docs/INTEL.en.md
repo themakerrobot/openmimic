@@ -27,7 +27,7 @@ groups                                                                   # you n
 
 ## 2. Importing a model
 
-On the device where you trained, **Export** the checkpoint in the **Models** tab, then bring it in with **Models → Import model** on the Intel device.
+On the device where you trained, **Export** the checkpoint in the **Models** tab, then bring it in with **Training › Models → Import a model from another device** on the Intel device.
 If you also download → import the dataset used for training (in **Datasets**), the conversion is validated on real frames and INT8 can be produced.
 
 ## 3. Conversion
@@ -60,7 +60,7 @@ Good to know
 | Method | How | Notes |
 |---|---|---|
 | **This device's Intel GPU (XPU)** | PyTorch XPU wheel → run location "this device" | lerobot picks the XPU automatically. Confirmed on Ubuntu · Windows; slow (see measurements below) |
-| **HF Jobs** | Choose an HF Jobs GPU under **Run on** in the Training tab | Independent of the device. Paid (per hour), Hub login required. When done, download the model in the Hub tab → convert |
+| **HF Jobs** | Choose an HF Jobs GPU under **Run on** in the Training tab | Independent of the device. Paid (per hour), Hub login required. When done, download the model in **Data › Hub** → convert |
 | **NVIDIA device** | Train on a Thor etc. → export in the Models tab → import on this device | Step 2 above |
 | This device's CPU | The default install, "this device" | Very slow. For checking that it works |
 

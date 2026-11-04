@@ -49,7 +49,7 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
 - **Safety for the arms** — a power check before starting blocks swapped adapters, and servo temperature and voltage are watched during a run with automatic stop.
 - **Good data** — actual collect rate on screen, episode review with synced cameras · 3D · joint plots, bulk delete of bad episodes, repair of broken datasets.
 - **Real-world success rate** — press S / F during a run to compare checkpoints by success rate.
-- **한/EN** — switch the screen language with one button.
+- **한/EN** — switch the screen language right from the ☰ menu.
 
 ## Supported
 
