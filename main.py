@@ -3663,14 +3663,14 @@ def collect_page(resume: str = ""):
     task0 = (pr["task"] if pr and pr["task"] else CFG["default_task"])
     name_hint = f"{pname}_v{len(mine) + 1}" if pname else "pick_place_v2"
     if pname:
-        projline = (f'<p class=muted>프로젝트 <b class=mono>{esc(pname)}</b> · 환경 <b class=mono>{esc(env_name())}</b>'
+        projline = (f'<p class=muted>프로젝트 <b class=mono>{esc(pname)}</b>'
                     f' — 새 데이터셋은 이 프로젝트에 자동으로 들어갑니다.</p>')
         if pr["env"] and pr["env"] != env_name():
             projline += (f'<p class="badge b-warn">이 프로젝트의 환경은 {esc(pr["env"])} 인데 지금은 {esc(env_name())} 입니다 — '
                          f'<a href="/projects">프로젝트</a>에서 다시 열면 그 환경으로 바뀝니다.</p>')
     else:
-        projline = (f'<p class=muted>환경 <b class=mono>{esc(env_name())}</b> · 프로젝트 없이 수집합니다 — '
-                    f'<a href="/projects">프로젝트</a>를 열면 태스크 설명과 이름이 채워지고 데이터셋이 묶입니다.</p>')
+        projline = ('<p class=muted>프로젝트 없이 수집합니다 — '
+                    '<a href="/projects">프로젝트</a>를 열면 태스크 설명과 이름이 채워지고 데이터셋이 묶입니다.</p>')
     return f"""{CSS}{nav_html('co')}<div class=wrap>
     <p class=eyebrow>원격조작 녹화 · {esc(kind()["label"])} · {"양팔 " + kind()["cli"]["bi_follower"] if BIMANUAL else "한팔 " + kind()["cli"]["follower"]}</p><h2>수집</h2>
     {busywarn}{projline}
@@ -7787,7 +7787,7 @@ document.addEventListener('keydown',ev=>{
   const chip=(t,cls)=>'<span class="badge '+(cls||'')+'" style="margin-right:4px">'+E(t)+'</span>';
   $('chips').innerHTML=chip(INFO.episodes.length+' 에피소드')+chip(INFO.fps+' fps')+chip(INFO.robot_type||'robot ?')
     +(INFO.version?chip(INFO.version, INFO.version==='v3.0'?'':'b-warn'):'')
-    +(INFO.env?chip('환경 '+INFO.env):'')+(INFO.project?'<a href="/projects">'+chip('프로젝트 '+INFO.project,'b-run')+'</a>':'');
+    +(INFO.project?'<a href="/projects">'+chip('프로젝트 '+INFO.project,'b-run')+'</a>':'');
   paintDel(); buildList();
   if(!INFO.episodes.length){ $('vgrid').innerHTML='<p class=muted style="padding:14px;margin:0">에피소드가 없습니다</p>'; return; }
   const want=parseInt(new URLSearchParams(location.search).get('ep'));
@@ -7849,7 +7849,7 @@ tr.best td{background:rgba(76,175,110,.10)}
 <div class=wrap>
 <p class=eyebrow>처음 설정</p><h2>셋업 마법사</h2>
 <p class=muted style="max-width:900px">팔(보드) 하나씩 <b>포트 찾기 → 진단 → 캘리브레이션 → 확인</b> 순서로 안내합니다.
-모터를 구동하는 단계는 없습니다 — 손으로 움직여서 확인합니다. 카메라는 <a href="/setup#cameras">셋업</a> 탭에서 합니다.</p>
+모터를 구동하는 단계는 없습니다 — 손으로 움직여서 확인합니다. 카메라는 <a href="/setup#cameras">포트·카메라</a> 탭에서 합니다.</p>
 <div class=modebar id=modebar></div>
 <div id=busy></div>
 <div class=wgrid id=over></div>
@@ -7893,8 +7893,7 @@ function paintMode(){
   Object.keys(W.robots).forEach(r=>{ h+='<button data-robot="'+E(r)+'" class="'+(W.robot===r?'primary':'')+'">'+E(W.robots[r])+'</button>'; });
   h+='<span style="width:14px"></span><span class=muted>구성</span>'
     +'<button id=wm1 class="'+(bi?'':'primary')+'">한팔</button>'
-    +'<button id=wm2 class="'+(bi?'primary':'')+'">양팔 (left / right)</button>'
-    +'<span class=tiny>환경 <span class=mono>'+E(W.env)+'</span> · 바꾸면 이 환경 설정이 바뀝니다</span>';
+    +'<button id=wm2 class="'+(bi?'primary':'')+'">양팔 (left / right)</button>';
   if(W.plugin_missing && W.plugin_missing.length)
     h+='<p class="badge b-warn" style="flex-basis:100%">양팔 '+E(W.robot_label)+' 롤아웃에 필요한 플러그인 미설치 — 터미널: pip install --no-deps '
       +W.plugin_missing.map(m=>'-e plugins/'+E(m)).join(' ')+'</p>';
@@ -8261,7 +8260,7 @@ async function stepVerify(s){
   $('wok').onclick=async()=>{ const r=await jpost('/api/wizard/verified',{side:SLOT.side,role:SLOT.role}); if(r.error){ alert(r.error); return; } W=r; stopTimers(); STEP=null; ARM=null; paintOver(); paintAfter();
     const nx=W.slots.find(x=>{ const d=doneOf(x); return !(d.port&&d.calib&&d.verify); });
     $('wiz').innerHTML='<div class=wpanel><p class="note ok"><b>'+E(SLOT.side)+' · '+RL[SLOT.role]+'</b> 확인 완료</p>'
-      +(nx?'<button class=primary id=wnx>다음 팔: '+E(nx.side)+' · '+RL[nx.role]+'</button>':'<p>모든 팔이 준비됐습니다. 아래에서 카메라와 환경을 확인하세요.</p>')+'</div>';
+      +(nx?'<button class=primary id=wnx>다음 팔: '+E(nx.side)+' · '+RL[nx.role]+'</button>':'<p>모든 팔이 준비됐습니다. 아래에서 카메라를 확인하세요.</p>')+'</div>';
     if(nx) $('wnx').onclick=()=>openSlot(nx.side,nx.role); };
   const r=await jpost('/api/wizard/verify/start',{side:SLOT.side,role:SLOT.role});
   if(STEP!=='verify') { jpost('/api/wizard/verify/stop'); return; }

@@ -1651,5 +1651,6 @@
 "기록 삭제": "Delete record",
 "이전 작업 보기": "Show older jobs",
 "끝난 수집·편집·업로드 작업의 기록과 로그를 지웁니다. 학습·실행·변환 기록은 모델 화면에서 쓰므로 남깁니다. 계속할까요": "Delete records and logs of finished collection, edit and upload jobs. Training, rollout and conversion records are kept because the Models page uses them. Continue",
-"연결된 카메라를 한 장씩 찍어 보여 줍니다 — 어느 장치가 어느 카메라인지 화면으로 확인하세요.": "Takes one picture from each connected camera — check on screen which device is which camera."
+"연결된 카메라를 한 장씩 찍어 보여 줍니다 — 어느 장치가 어느 카메라인지 화면으로 확인하세요.": "Takes one picture from each connected camera — check on screen which device is which camera.",
+"모든 팔이 준비됐습니다. 아래에서 카메라를 확인하세요.": "All arms are ready. Check the cameras below."
 }
