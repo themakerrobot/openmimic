@@ -44,14 +44,14 @@ The four main tabs at the top follow the work order: **Robot · Data · Training
 | Main tab | Sub-tabs |
 |---|---|
 | Robot | Setup wizard · Ports & cameras · Calibration · Control |
-| Data | Datasets · Collect |
+| Data | Datasets · Collect · Hub |
 | Training | New training · Models |
 | Rollout | — |
-| More | Projects · Hub · Jobs |
 
 - Each list row shows one button (e.g. **Run** on a model); the rest, such as download, export and delete, are in the **⋯** menu at the end of the row
 - Rarely used settings and long explanations are folded under **▸**
-- The chip at the top right is the open **project** (with single/bimanual); **Port not set** appears only when ports are empty
+- The top right has only the open **project** chip (robot model and single/bimanual; click for the project list) and the **☰ menu**
+  (job list · 한국어/English · fullscreen). **Port not set** appears when ports are empty, and **● job name** (click for its log) while a job such as collection or training runs
 - If something has to be done first (e.g. no port set, no dataset), the start button on that screen is disabled and a **large button shows where to go**
 
 ### Robot › Ports & cameras
@@ -157,7 +157,10 @@ Choose a checkpoint and run autonomously. Before starting, cameras and joint cou
 |---|---|
 | ![](img/rollout.png) | ![](img/rollout_live.png) |
 
-### More — Projects · Hub · Jobs
+### Projects · Hub · Jobs
+
+Open projects from the project chip at the top right, the hub from **Data › Hub**, and jobs from **☰ → Jobs**.
+
 
 - **Projects** — groups one task (task description, its own environment, datasets, models). A new project creates an empty environment with the same name
   (only robot model and single/bimanual are set; ports and cameras are empty; calibration ids are project-specific such as `<project>_follower`)
@@ -227,7 +230,7 @@ The **한/EN** button in the top bar switches Korean ↔ English. Text you type 
 | No 3D view | The 3D library ships in the repo's `vendor/` folder, so no internet is needed. Check that the browser supports WebGL (hardware acceleration on) |
 | Using it without internet | Once installed, setup · collect · training · rollout all work offline (the install also downloads ACT's ResNet18 ImageNet weights). Only optional features need internet the first time — the SmolVLA pretrained model, ACT2's DINOv2 backbone, HF Jobs and the Hub. If the web fonts cannot be loaded, system fonts are used |
 | Several cameras drop out | Robot › Ports & cameras → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
-| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in More → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching environments work during training |
+| "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in ☰ → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching environments work during training |
 | Collection ends right after starting | Read the error and log left on the collection screen. A new dataset with no saved episodes is removed automatically, so you can start again with the same name |
 | Dataset shows "not finalized" | **Repair** in the dataset list |
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |

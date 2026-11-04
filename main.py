@@ -462,7 +462,7 @@ NAV_EN = {"셋업": "Setup", "캘리브레이션": "Calibration", "제어": "Con
           "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration",
           # 큰 탭·하위 탭
           "데이터": "Data", "포트·카메라": "Ports & cameras", "새 학습": "New training", "셋업 마법사": "Setup wizard",
-          "끝남": "Done", "실행 중": "Running"}
+          "끝남": "Done", "실행 중": "Running", "전체화면": "Fullscreen"}
 _NAV_RE = re.compile(r'(<span class=(?:tl|jobk)[^>]*>|<h2>|<b class=gsname>|<th[^>]*>|<p class=eyebrow>|<label class=f>'
                      r'|<a class=btnlink [^>]*>|<a href="/[^"]*">)'
                      r'([^<]+?)( ?</span>| ?</h2>| ?</b>| ?</th>| ?</p>| <| ?</a>)')
@@ -2711,6 +2711,12 @@ a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .navmenu a{display:block;padding:8px 12px;border-radius:6px;color:var(--muted);font-size:13.5px}
 .navmenu a:hover{background:var(--surface2);color:var(--text);text-decoration:none}
 .navmenu a.on{color:var(--text)}
+.appmenu>summary{font-size:17px;padding:0 12px;font-family:var(--sans)}
+.appmenu .navmenu{left:auto;right:0;min-width:180px}
+.navmenu button{display:block;width:100%;text-align:left;padding:8px 12px;border:0;border-radius:6px;background:transparent;
+  color:var(--muted);font-size:13.5px;font-weight:400;cursor:pointer}
+.navmenu button:hover{background:var(--surface2);color:var(--text)}
+.statuscluster .jobtxt{display:inline-flex;align-items:center;gap:6px}
 .nav a{display:flex;align-items:center;padding:0 14px;color:var(--muted);
   border-bottom:2px solid transparent;font-weight:500;font-size:13.5px}
 .nav a:hover{color:var(--text);text-decoration:none}
@@ -2718,9 +2724,8 @@ a{color:var(--accent);text-decoration:none} a:hover{text-decoration:underline}
 .statuscluster{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto;white-space:nowrap;
   font-family:var(--mono);font-size:12px;color:var(--muted)}
 .statuscluster a.chip{display:inline-flex;align-items:center;gap:5px;color:inherit;text-decoration:none}
-.statuscluster a.chip .badge{max-width:14em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.statuscluster a.chip .badge{max-width:24em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @media(max-width:700px){ .statuscluster a.chip .badge{max-width:6.5em} }
-.fsbtn{flex:0 0 auto}
 .chipsub{opacity:.75;font-size:.92em}
 button.fixbadge{cursor:pointer;font:inherit;font-size:11px;padding:2px 8px;line-height:1.4}
 button.fixbadge:hover{filter:brightness(1.25)}
@@ -2744,8 +2749,6 @@ button.fixbadge:hover{filter:brightness(1.25)}
 .warnbar{background:rgba(217,161,59,.12);border-bottom:1px solid rgba(217,161,59,.5);color:var(--warn);
   padding:8px 22px;font-size:13px;line-height:1.5;overflow-wrap:anywhere}
 .jobtxt{color:inherit;overflow:hidden;text-overflow:ellipsis;min-width:0}
-.langbtn{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:6px;padding:2px 7px;text-decoration:none}
-.langbtn:hover{color:var(--text);border-color:var(--accent);text-decoration:none}
 @media(max-width:1600px){ .statuscluster .jobid{display:none} .nav a{padding:0 10px} .appbar{gap:18px} }
 @media(max-width:1350px){ .nav a{padding:0 8px} }
 @media(max-width:1300px) and (min-width:821px){ .brand small{display:none} .nav a{padding:0 6px;font-size:13px}
@@ -2876,9 +2879,6 @@ a.btnlink.primary{background:var(--accent-dim);border-color:var(--accent);color:
   th,td{padding:8px 9px}
   th{white-space:nowrap}
 }
-.fsbtn{padding:5px 9px;font-size:15px;line-height:1;background:transparent;
-  border-color:var(--line);color:var(--muted);display:inline-flex;align-items:center}
-.fsbtn:hover{color:var(--text);border-color:var(--accent)}
 </style>
 <script>
 document.addEventListener('click',function(e){
@@ -2930,37 +2930,32 @@ def row_menu(items):
 NAV_GROUPS = [
     ("robot", "로봇", "/setup", [("/setup/wizard", "셋업 마법사", "wz"), ("/setup", "포트·카메라", "st"),
                                  ("/calib", "캘리브레이션", "cb"), ("/control", "제어", "ct")]),
-    ("data", "데이터", "/", [("/", "데이터셋", "ds"), ("/collect", "수집", "co")]),
+    ("data", "데이터", "/", [("/", "데이터셋", "ds"), ("/collect", "수집", "co"), ("/hub", "허브", "hb")]),
     ("train", "학습", "/train", [("/train", "새 학습", "tr"), ("/models", "모델", "md")]),
     ("run", "실행", "/rollout", [("/rollout", "실행", "ro")]),
 ]
 
 
 def nav_html(active=""):
+    """상단바: 브랜드 · 큰 탭 4개 | 열린 프로젝트 칩 · (문제일 때만) 포트 미설정 · (실행 중일 때만) 작업 표시 · ☰ 메뉴.
+    프로젝트 목록은 칩, 작업 목록·한/영·전체화면은 ☰ 메뉴, 허브는 데이터 › 허브 하위 탭에 있습니다."""
     running = [j for j in jobs_index() if j["alive"] and j["kind"] != "sim"]     # 예전 판의 가상 장치 작업은 숨김
     if any_arm_connected():
         running = [{"id": "manual-control", "kind": "control"}] + running
-    if running:
+    pname, _ = active_project()
+    arms = "양팔" if BIMANUAL else "한팔"
+    right = (f'<a href="/projects" class=chip title="열린 프로젝트 — 누르면 프로젝트 목록 (장비 구성: {esc(env_name())})">'
+             f'<span class="badge{" b-run" if pname else ""}">{esc(pname) if pname else "프로젝트 없음"}'
+             f'<span class=chipsub> · {esc(kind()["label"])} {arms}</span></span></a>')
+    if not ports_configured():         # 문제가 있을 때만 뜨는 칩
+        right += '<a href="/setup/wizard" title="셋업 마법사에서 포트를 정하세요"><span class="badge b-warn">포트 미설정</span></a>'
+    if running:                        # 대기 중에는 아무것도 띄우지 않습니다
         j = running[0]
         extra = f' +{len(running) - 1}' if len(running) > 1 else ''
         label = JOB_KIND_LABEL.get(j["kind"], j["kind"])
-        cluster = (f'<div class=statuscluster><span class="dot live"></span>'
-                   f'<a href="/jobs/{esc(j["id"])}" class=jobtxt title="실행 중인 작업 — {esc(j["id"])}">'
-                   f'<span class=jobk>{esc(label)}</span><span class=jobid> · {esc(j["id"])}</span>{extra}</a></div>')
-    else:
-        cluster = '<div class=statuscluster><span class=dot></span><span class=jobk title="실행 중인 작업 없음">대기</span></div>'
-    pname, _ = active_project()
-    # 상단 칩은 '지금 무엇을 열었나' 하나만 — 프로젝트(= 장비 구성 한 벌). 한팔/양팔은 그 안에 작게, 환경 이름은 툴팁에만.
-    arms = "양팔" if BIMANUAL else "한팔"
-    mode_badge = (f'<a href="/projects" class=chip title="열린 프로젝트 — 누르면 프로젝트 목록 (장비 구성: {esc(env_name())})">'
-                  f'<span class="badge{" b-run" if pname else ""}">{esc(pname) if pname else "프로젝트 없음"}'
-                  f'<span class=chipsub> · {arms}</span></span></a> ')
-    if I18N_FILE.is_file():            # 영어 사전이 있을 때만 한/영 버튼
-        mode_badge = '<a href="/lang" class=langbtn title="한국어 / English">한/EN</a> ' + mode_badge
-    if not ports_configured():         # 문제가 있을 때만 뜨는 칩
-        mode_badge += '<a href="/setup/wizard" title="셋업 마법사에서 포트를 정하세요"><span class="badge b-warn">포트 미설정</span></a> '
-    cluster = cluster.replace('<div class=statuscluster>',
-                              f'<div class=statuscluster>{mode_badge}&nbsp;')
+        href = "/jobs" if j["kind"] == "control" else f'/jobs/{esc(j["id"])}'
+        right += (f'<a href="{href}" class=jobtxt title="실행 중인 작업 — {esc(j["id"])}"><span class="dot live"></span>'
+                  f'<span class=jobk>{esc(label)}</span><span class=jobid> · {esc(j["id"])}</span>{extra}</a>')
 
     def tab(href, label, key):
         return f'<a href="{href}"{" class=on" if key == active else ""}><span class=tl>{label}</span></a>'
@@ -2971,18 +2966,15 @@ def nav_html(active=""):
     sub = ""
     if group and len(group[3]) > 1:
         sub = ('<div class=subnav>' + "".join(tab(h, lb, k) for h, lb, k in group[3]) + '</div>')
-    more_items = [("/projects", "프로젝트", "pj"), ("/hub", "허브", "hb"), ("/jobs", "작업", "jb")]
-    cur = next((lb for _, lb, k in more_items if k == active), "")
-    more = (f'<details class=navmore{" data-on=1" if cur else ""}><summary><span class=tl>{cur or "더보기"}</span> ▾</summary><div class=navmenu>'
-            + "".join(f'<a href="{h}"{" class=on" if k == active else ""}><span class=tl>{lb}</span></a>' for h, lb, k in more_items)
-            + '</div></details>')
-    return (f'<div class=appbar><div class=brand>OpenMimic <a href="/setup/wizard" title="기종 바꾸기 — 셋업 마법사"><small>/ {esc(kind()["label"])}</small></a></div>'
-            f'<div class=nav>{tabs}</div>{more}{cluster}'
-            f'<button class=fsbtn title="전체화면" aria-label="전체화면" onclick="toggleFS()">'
-            f'<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
-            f'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">'
-            f'<path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M8 21H5a2 2 0 0 1-2-2v-3M16 21h3a2 2 0 0 0 2-2v-3"/>'
-            f'</svg></button></div>' + sub
+    items = [f'<a href="{h}"{" class=on" if k == active else ""}><span class=tl>{lb}</span></a>'
+             for h, lb, k in (("/projects", "프로젝트", "pj"), ("/jobs", "작업", "jb"))]
+    if I18N_FILE.is_file():            # 영어 사전이 있을 때만 한/영 전환
+        items.append('<a href="/lang">한국어 / English</a>')
+    items.append('<button type=button onclick="toggleFS()"><span class=tl>전체화면</span></button>')
+    menu = (f'<details class="navmore appmenu"{" data-on=1" if active in ("pj", "jb") else ""}>'
+            f'<summary aria-label="더 보기 메뉴">☰</summary><div class=navmenu>{"".join(items)}</div></details>')
+    return (f'<div class=appbar><div class=brand><a href="/">OpenMimic</a></div>'
+            f'<div class=nav>{tabs}</div><div class=statuscluster>{right}</div>{menu}</div>' + sub
             + (f'<div class=warnbar>{esc(calib_root_warning())}</div>' if calib_root_warning() else ''))
 
 
