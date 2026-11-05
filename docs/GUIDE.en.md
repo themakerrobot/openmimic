@@ -99,8 +99,9 @@ Enter the collection settings and start. **Recording does not start by itself** 
 
 - **Beeps** signal start, save and the last 3 seconds, so you do not need to watch the screen
 - You can also **continue recording** into an existing dataset
-- With **Compress video while recording** (on by default on Windows), saving an episode finishes almost immediately. Episodes with dropped frames (CPU could not keep up) are discarded
+- With **Compress video while recording** (on by default), saving an episode finishes almost immediately. Video is saved as H.264, which keeps the CPU load low (resuming an older AV1 dataset keeps AV1). Episodes with dropped frames (CPU could not keep up) are discarded
 - The screen shows the actual **collect rate** (e.g. `29.8 / 30 Hz`) and warns when it is below the target — then the recorded time runs faster than real time
+- If a camera cannot keep up with the target fps, the same frames are saved repeatedly, so a **Camera frame rate is low** warning appears with the camera name
 
 | Collect settings | Collecting |
 |---|---|

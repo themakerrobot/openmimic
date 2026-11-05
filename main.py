@@ -9924,13 +9924,20 @@ class _Preview:
         self.latest = {}
         self.on = True
         self.ticks = collections.deque(maxlen=120)    # get_observation 호출 시각 — 실제 수집 주기(Hz) 계산용
+        # 카메라별 '새 프레임' 이 들어온 시각. lerobot 은 카메라의 최신 프레임을 기다리지 않고 꺼내 가므로(read_latest),
+        # 카메라가 목표 fps 를 못 내면 수집 주기는 정상인데 같은 프레임이 반복 저장됩니다 — 그걸 잡으려고 셉니다.
+        # 카메라 스레드는 새 프레임마다 새 배열을 만들므로 같은 객체면 같은 프레임입니다.
+        self.cam_ticks = collections.defaultdict(lambda: collections.deque(maxlen=120))
         orig = robot.get_observation
 
         def tee():
-            self.ticks.append(time.perf_counter())
+            now = time.perf_counter()
+            self.ticks.append(now)
             obs = orig()
             for k, v in obs.items():
                 if getattr(v, "ndim", 0) == 3:
+                    if v is not self.latest.get(k):
+                        self.cam_ticks[k].append(now)
                     self.latest[k] = v
             return obs
 
@@ -9941,8 +9948,23 @@ class _Preview:
     def loop_hz(self):
         """최근 2초 동안의 실제 루프 주기. 루프가 멈춰 있으면(저장 중 등) None.
         목표 fps 보다 낮으면 데이터셋 타임스탬프(프레임 번호 / fps)가 실제 시간보다 빨라집니다."""
+        return self._rate(self.ticks)
+
+    def cam_hz(self):
+        """카메라별 최근 2초 동안 새 프레임 수/초. 루프가 멈춰 있으면 빈 dict."""
+        if self.loop_hz() is None:
+            return {}
         now = time.perf_counter()
-        t = [x for x in list(self.ticks) if now - x <= 2.0]
+        out = {}
+        for k, q in list(self.cam_ticks.items()):
+            n = sum(1 for x in list(q) if now - x <= 2.0)
+            out[k] = round(n / 2.0, 1)
+        return out
+
+    @staticmethod
+    def _rate(ticks):
+        now = time.perf_counter()
+        t = [x for x in list(ticks) if now - x <= 2.0]
         if len(t) < 5 or now - t[-1] > 0.5 or t[-1] <= t[0]:
             return None
         return round((len(t) - 1) / (t[-1] - t[0]), 1)
@@ -9952,6 +9974,7 @@ class _Preview:
         if st.get("t0"):
             st["elapsed"] = round(time.time() - st["t0"], 1)
         st["hz"] = self.loop_hz()
+        st["cam_hz"] = self.cam_hz()
         tmp = self.rd / "status.json.preview.tmp"     # put() 과 다른 임시 파일 (동시 쓰기 섞임 방지)
         tmp.write_text(json.dumps(st))
         P.replace_file(tmp, self.rd / "status.json")
@@ -9988,6 +10011,33 @@ class _Preview:
     def stop(self):
         self.on = False
         self.thread.join(timeout=2)     # 늦게 끝난 os.replace 가 최종 상태를 덮어쓰지 않게
+
+
+# 녹화 영상 인코더. lerobot 기본(AV1 · libsvtav1 preset 12)은 640×480 30fps 카메라 1대에 CPU 코어 0.7~1.2개를 써서,
+# 카메라 3대를 '녹화하면서 바로 압축' 하면 저전력 PC 가 못 따라갑니다. 같은 화질(PSNR)에서 H.264(libx264 veryfast)는
+# 0.2코어 안팎이고 용량은 같거나 작으며, 디코드가 3~6배 빠르고 태블릿 브라우저에서도 재생됩니다.
+# PyAV 배포판(Linux·Windows)에 libx264 가 들어 있습니다. 하드웨어 인코더 자동 선택(vcodec=auto)은 장치가 없어도
+# h264_nvenc 를 '사용 가능' 으로 잡아 시작 때 실패할 수 있어 쓰지 않습니다.
+RECORD_VCODEC = {"vcodec": "h264", "crf": 23, "preset": "veryfast"}
+
+
+def record_rgb_encoder(resume_root=None):
+    """(RGBEncoderConfig, 설명). 이어서 수집은 기존 영상과 같은 설정 — lerobot 이 같은 mp4 에 이어 붙이므로 코덱이 섞이면 안 됩니다.
+    새 데이터셋은 H.264, 이 PC 의 PyAV 에 H.264 인코더가 없으면 lerobot 기본(AV1)."""
+    from lerobot.configs.video import RGBEncoderConfig
+    if resume_root:
+        feats = load_json(Path(resume_root) / "meta/info.json", {}).get("features", {})
+        for f in feats.values():
+            vi = f.get("info") or {}
+            if f.get("dtype") == "video" and not vi.get("video.is_depth_map"):
+                cfg = RGBEncoderConfig.from_video_info(vi)
+                return cfg, f"{cfg.vcodec} (기존 데이터셋과 같게)"
+    try:
+        cfg = RGBEncoderConfig(**RECORD_VCODEC)
+        return cfg, f"{cfg.vcodec} ({cfg.preset}, crf {cfg.crf})"
+    except Exception as e:      # noqa: BLE001 — 인코더가 없거나 옵션을 못 받으면 lerobot 기본으로
+        cfg = RGBEncoderConfig()
+        return cfg, f"{cfg.vcodec} (H.264 를 쓸 수 없어 기본값: {e})"
 
 
 def worker_record(jid):
@@ -10100,6 +10150,8 @@ def worker_record(jid):
                                    num_episodes=int(spec["num_episodes"]),
                                    push_to_hub=False, streaming_encoding=bool(spec.get("streaming_encoding", False)))
         put(phase="dataset")
+        dcfg.rgb_encoder, enc_note = record_rgb_encoder(dcfg.root if spec.get("resume") else None)
+        print(f"[openmimic] 영상 인코더: {enc_note}", flush=True)
         # 양팔은 robot.cameras 가 이름 충돌(wrist)로 줄어드므로 관측 키에서 셉니다
         ncam = sum(1 for v in robot.observation_features.values() if isinstance(v, tuple))
         iw_p = dcfg.num_image_writer_processes if ncam else 0
@@ -10327,6 +10379,7 @@ COLLECT_RUN_HTML = """
       <span id=hzbox style="display:none">수집 주기 <b id=hz>-</b></span>
     </div>
     <p id=hzwarn class="badge b-warn" style="display:none;margin-top:8px;white-space:normal"></p>
+    <p id=camwarn class="badge b-warn" style="display:none;margin-top:8px;white-space:normal"></p>
     <div class=statline id=temps style="margin-top:6px"></div>
     <p id=health class=badge style="display:none;margin-top:8px"></p>
     <p id=err class="badge b-bad" style="display:none;margin-top:10px"></p>
@@ -10456,6 +10509,11 @@ function paint(d){
   $('hzwarn').style.display=slow?'':'none';
   if(slow) $('hzwarn').textContent='수집 주기가 목표('+s.fps+' Hz)보다 낮습니다 ('+s.hz+' Hz) — 저장되는 시간이 실제보다 빨라집니다. '
     +'카메라 형식을 MJPG 로, 해상도를 낮추거나, 카메라를 다른 USB 포트(컨트롤러)로 나눠 꽂아 보세요.';
+  // 카메라 실제 fps — 루프보다 새 프레임이 적게 오면 같은 프레임이 반복 저장됩니다 (2초 평균, 15% 넘게 모자랄 때만)
+  const ch=s.cam_hz||{}, lowc=live?Object.keys(ch).filter(k=>ch[k]<s.hz*0.85):[];
+  $('camwarn').style.display=lowc.length?'':'none';
+  if(lowc.length) $('camwarn').textContent='카메라 실제 fps 가 낮습니다 ('+lowc.map(k=>k+' '+ch[k]+' fps').join(', ')
+    +') — 같은 프레임이 반복 저장됩니다. 그 카메라의 형식을 MJPG 로, 해상도를 낮추거나, 다른 USB 포트(컨트롤러)에 꽂아 보세요. 어두우면 카메라가 노출 때문에 fps 를 낮추기도 합니다.';
   const tb=$('temps'), t=s.temp||{};
   const names=Object.keys(t);
   tb.innerHTML = names.length

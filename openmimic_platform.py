@@ -57,10 +57,11 @@ def child_env_extra() -> dict:
 
 
 # ============================================================================ 공유 폴더
-# 수집 때 '녹화하면서 바로 영상 압축'(lerobot streaming_encoding) 기본값.
-# Windows 는 끄면 에피소드마다 PNG 수천 장을 쓰고(실시간 검사가 파일마다 검사) 저장 때 한꺼번에 압축해 저장이 수십 초 걸립니다.
-# Linux 는 지금까지와 같게 끔 (수집 화면에서 켤 수 있음).
-STREAMING_ENCODING_DEFAULT = IS_WIN
+# 수집 때 '녹화하면서 바로 영상 압축'(lerobot streaming_encoding) 기본값 — 모든 OS 에서 켬.
+# 끄면 에피소드마다 PNG 수천 장을 쓰고 저장 때 한꺼번에 압축해 저장이 수십 초 걸립니다 (Windows 는 실시간 검사까지 겹침).
+# 녹화 인코더를 H.264 로 바꾼 뒤(main.RECORD_VCODEC) 카메라 1대당 CPU 0.2코어 안팎이라 저전력 PC 도 따라갑니다.
+# 수집 화면 체크박스로 끌 수 있습니다.
+STREAMING_ENCODING_DEFAULT = True
 
 
 def avoid_spawn_pools() -> None:

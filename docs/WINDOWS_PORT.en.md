@@ -109,6 +109,8 @@ In 1 of 3 MuJoCo automatic-recording runs (the first run right after starting th
 - The save time is shown in the "Last" field of the collect screen and in the job log. On real Windows hardware, a save of over a minute dropped to about 36 seconds.
 - The time to re-read the PNGs and compress them all at once still remained, so the collect screen got **Compress video while recording** (lerobot `streaming_encoding`),
   on by default on Windows — no PNGs are written, so saving finishes almost immediately. Episodes where the encoder could not keep up and frames were dropped are discarded instead of saved.
+- The recording encoder changed from AV1 (lerobot default) to H.264 (libx264 veryfast) — at the same quality, CPU per camera dropped from 0.7–1.2 cores to about 0.2,
+  so compressing while recording keeps up on low-power PCs. The Windows PyAV 15.1 wheel was confirmed to include libx264; after this change, compressing while recording is the default on every OS.
 
 ## 3-2. Fixes from a full review (Windows)
 

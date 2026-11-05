@@ -303,13 +303,22 @@ EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 
 
 ## 수집 worker
 
-- **녹화하면서 바로 압축**(lerobot `streaming_encoding`): 수집 화면 체크박스(브라우저에 기억), 기본값 `P.STREAMING_ENCODING_DEFAULT`(Windows 켬, Linux 끔).
+- **영상 인코더**(`RECORD_VCODEC` · `record_rgb_encoder()`): 새 데이터셋은 H.264(libx264 `veryfast`, crf 23, GOP 2). lerobot 기본 AV1
+  (libsvtav1 preset 12, crf 30)과 같은 화질(PSNR 28.5 / 34.4 dB, 잡음 많은·부드러운 합성 화면)에서 640×480 30fps 카메라 1대당 CPU 0.20~0.23 코어
+  (AV1 0.70~1.15 코어), 용량은 같거나 작고(3.8 / 1.6 MB vs 9.6 / 1.7 MB, 300프레임), 디코드가 3~6배 빠릅니다. PyAV 배포판(Linux·Windows 15.1)에
+  libx264 가 들어 있고, 없으면 AV1 로 돌아갑니다. **이어서 수집**은 `meta/info.json` 의 영상 설정(`from_video_info`)을 그대로 써 코덱을 섞지 않습니다.
+  lerobot `vcodec=auto` 는 장치가 없어도 `h264_nvenc` 를 사용 가능으로 잡아(코덱 목록만 확인) 쓰지 않습니다. 쓴 인코더는 작업 로그 첫머리에 남깁니다.
+- **녹화하면서 바로 압축**(lerobot `streaming_encoding`): 수집 화면 체크박스(브라우저에 기억), 기본값 `P.STREAMING_ENCODING_DEFAULT`(모든 OS 켬).
   lerobot 은 인코더 큐가 차면 경고만 남기고 프레임을 버려 영상이 데이터보다 짧아지므로, worker 가 `lerobot.datasets.video_utils` 의
   `Encoder queue full … dropped` 경고를 세어 빠진 에피소드는 `clear_episode_buffer()` 로 버립니다.
-  시험(4코어 Linux, 640×480 카메라 3대 30fps, 10초): CPU 약 1.6 코어, 빠진 프레임 0, 저장 0.3초 (끄고 스레드 인코딩이면 5.4초).
+  시험(4코어 Linux, 640×480 카메라 3대 30fps, 잡음 많은 합성 화면): 녹화 중 CPU H.264 약 1.0 코어 / AV1 1.9 코어(프레임 생성 포함),
+  저장 0.14~0.28초, 빠진 프레임 0.
 - **실제 수집 주기**: `_Preview` 가 `get_observation` 호출 시각을 모아 최근 2초의 주기(`status.hz`)를 씁니다. 수집 화면은 대기·녹화 중에
   `수집 주기 x / fps Hz` 를 보이고 목표의 90% 아래면 경고합니다 — 데이터셋 타임스탬프는 `프레임 번호 / fps` 라 루프가 느리면 실제보다 빨라집니다.
   흔한 원인: 무압축(YUYV) 카메라 여러 대의 USB 대역폭, Windows 실시간 검사가 프레임 PNG 를 검사하는 부하. 셋업은 카메라가 2대 이상이고 MJPG 가 아닌 것이 있으면 경고합니다.
+- **카메라 실제 fps**: lerobot 은 카메라 최신 프레임을 기다리지 않고 꺼내 가므로(`read_latest`) 카메라가 느려도 수집 주기는 정상이고
+  같은 프레임이 반복 저장됩니다. `_Preview` 가 카메라별로 새 프레임(새 배열 객체)이 들어온 시각을 세어 `status.cam_hz` 에 쓰고,
+  수집 화면은 카메라가 루프 주기의 85% 아래면 그 카메라 이름과 fps 로 경고합니다.
 
 `lerobot-record` 는 터미널 키보드로 조작하는데, PTY 로 키를 넣으면 X11 세션에서 pynput 이 가로채 버려집니다.
 그래서 `python main.py --worker record <jid>` 가 lerobot `record_loop()` 를 직접 부르고, 웹 버튼이 `events` 를 바꿉니다.
