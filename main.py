@@ -4344,7 +4344,12 @@ def local_cuda(refresh=False):
 def resnet_cached():
     """torchvision ResNet18 ImageNet 가중치가 이 기기 캐시에 있는지 (ACT·Diffusion 첫 학습 때 받는 파일)."""
     home = os.environ.get("TORCH_HOME") or os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "torch")
-    return (Path(home) / "hub" / "checkpoints" / "resnet18-f37072fd.pth").is_file()
+    f = Path(home) / "hub" / "checkpoints" / "resnet18-f37072fd.pth"
+    # 크기도 봅니다 — 빈·잘린 파일이 남아 있으면 '받아 둠' 으로 보고 넘어갔다가 학습이 EOFError 로 죽습니다 (정상 약 44.7 MB)
+    try:
+        return f.stat().st_size > 40_000_000
+    except OSError:
+        return False
 
 
 def policy_train_args(pol, ds_root, opts=None):

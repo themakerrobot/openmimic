@@ -495,7 +495,7 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   `dino` → `vision_backbone=dinov2_small image_size=224`(`transformers` 필요), `flow` → `action_head=flow use_vae=false flow_steps=5`.
   아무것도 안 켜면 ACT 와 같은 모델이라 같은 데이터·step 으로 나란히 비교할 수 있습니다.
 - **ImageNet 백본**: ACT·Diffusion 은 학습 시작 때 torchvision ResNet18 가중치를 `download.pytorch.org` 에서 받습니다.
-  `nobb` 선택지는 `--policy.pretrained_backbone_weights=null`. 캐시(`$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth`)가 없으면 경고.
+  `nobb` 선택지는 `--policy.pretrained_backbone_weights=null`. 캐시(`$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth`)가 없거나 40 MB 이하(빈·잘린 파일 — 그대로 두면 학습이 `EOFError` 로 죽음)면 경고.
 - **장치 확인**: OpenMimic 본체는 torch 를 import 하지 않으므로 `local_cuda()` 가 하위 프로세스로 `torch.cuda`·`torch.xpu` 를 묻고
   10분 캐시합니다. 학습 탭 점검에 학습 장치(GPU / XPU / CPU)를 표시만 하고 막지는 않습니다.
 - **SmolVLA**: `lerobot/smolvla_base` 의 영상 입력은 `observation.images.camera1~3` 이라, 데이터셋 카메라 이름(top·wrist …)이 다르면
