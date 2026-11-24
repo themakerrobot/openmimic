@@ -47,6 +47,7 @@
 | `plugins/lerobot_teleoperator_bi_omx/` | 양팔 OMX 리더 `bi_omx_leader` |
 | `plugins/lerobot_policy_act2/` | ACT2 정책 `act2` — lerobot ACT 블록을 import 하고 증강·청크 보간·DINOv2 백본·flow 헤드를 설정으로 붙임 |
 | `tools_act2bench.py` | ACT 와 ACT2 변형을 같은 step·시드로 학습해 시간·loss·추론 지연·성공률을 표로 비교 |
+| `tools_policybench.py` | 데이터셋 없이 임의 입력으로 정책별 학습 step 시간·메모리(CUDA·XPU 는 torch 최대 할당량)를 이 기기에서 잼 — 정책마다 새 프로세스 |
 | `urdf/` | 3D 용 URDF·STL — SO-101 (TheRobotStudio), OMX-F (ROBOTIS) |
 | `lerobot_conda.sh` | 새 기기 설치 스크립트 |
 | `activate.sh` | conda 활성화 + `HF_HOME` + 작업 폴더 이동 (`lerobot_conda.sh` 가 생성) |

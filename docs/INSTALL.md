@@ -291,3 +291,16 @@ python tools_armcheck.py --port COM5 --role follower                         # W
 ### 데이터셋 복구
 
 **데이터 › 데이터셋** 의 **복구** 버튼과 같은 동작입니다: `python tools_dsrepair.py <데이터셋 폴더>` (고치기 전에 백업합니다).
+
+### 정책별 학습 속도·메모리
+
+이 기기(NVIDIA GPU · Intel GPU(XPU) · CPU)에서 정책마다 학습 step 시간과 메모리를 잽니다. 데이터셋은 필요 없고, 다른 학습·실행이 없을 때 돌립니다.
+
+```bash
+python tools_policybench.py                                   # 한팔: 카메라 2대 640×480 · 관절 6 · 배치 8
+python tools_policybench.py --cams 3 --dim 12                 # 양팔
+python tools_policybench.py --policies act,smolvla --batch 4  # 일부 정책만 · 배치 바꾸기
+```
+
+결과는 표로 나오고 `outputs/policybench_<시각>.md` 로 저장됩니다. 모델 계산만 재므로 실제 학습은 데이터 읽기만큼 더 걸릴 수 있습니다.
+SmolVLA·Diffusion 은 학습 탭의 '필요한 패키지 설치' 를 먼저 해야 하고, SmolVLA·DINOv2 는 처음 한 번 인터넷으로 모델을 받습니다.

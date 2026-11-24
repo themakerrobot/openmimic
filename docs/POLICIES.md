@@ -105,3 +105,5 @@ lerobot e40b58a · torch 2.11 · CPU 에서 정책 하나를 새 프로세스로
 - DINOv2 는 영상을 224×224 로 줄여 넣고 백본을 고정해 ACT 보다 적게 씁니다. SmolVLA 는 영상을 512×512 로 맞추고 앞단을 고정해
   카메라가 늘어도 거의 그대로입니다. Diffusion 은 기본 설정이 영상을 줄이지 않고 2 프레임(`n_obs_steps=2`)을 넣어 가장 많이 씁니다.
 - 추론 칸은 정책만의 값입니다. 실제 실행 프로세스는 여기에 파이썬·lerobot·카메라 몫(약 1 GB)이 더해집니다.
+- 내 기기(GPU·XPU)의 학습 속도·메모리는 `python tools_policybench.py` 로 잽니다 ([INSTALL.md](INSTALL.md#정책별-학습-속도메모리)).
+  참고로 위 시험 서버(Xeon 4코어 CPU)에서 ACT 한팔 배치 8 은 step 당 약 10 초였습니다.

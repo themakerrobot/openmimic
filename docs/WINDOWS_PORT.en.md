@@ -143,7 +143,7 @@ The whole code base was re-read with Windows in mind and only places that are re
 - On the English screen, paths and device names are not translated. If the user folder name contained Korean, the dictionary replaced those characters and broke the path.
 - A hand-typed `com5` is treated as the same port as `COM5`. The COM list is shown in numeric order.
 - Turning off the virtual device clears the render frame header, so virtual cameras do not freeze on an old picture.
-- Tools run directly in a terminal (`tools_armcheck` · `tools_dxlcheck` · `tools_act2bench`) write output and files in UTF-8.
+- Tools run directly in a terminal (`tools_armcheck` · `tools_dxlcheck` · `tools_act2bench` · `tools_policybench`) write output and files in UTF-8.
 
 **Install · launch scripts**
 
