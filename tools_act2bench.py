@@ -200,7 +200,8 @@ def main():
                 if out.exists():
                     print(f"[skip] {out.name} 이미 있음 (다시 돌리려면 폴더를 지우세요)")
                 else:
-                    argv = [sys.executable, "-m", "lerobot.scripts.lerobot_train",
+                    # P.LEROBOT_TRAIN: Windows 는 openmimic_train.py 를 거쳐 checkpoints/last 링크 권한 오류를 피합니다
+                    argv = [sys.executable, *P.LEROBOT_TRAIN,
                             f"--dataset.repo_id={repo}", f"--dataset.root={root}", *pargs, *extra,
                             f"--output_dir={out}", f"--steps={a.steps}", f"--batch_size={a.batch}",
                             f"--num_workers={a.num_workers}", f"--seed={seed}",
@@ -209,12 +210,15 @@ def main():
                     print(f"[train] {out.name}: {' '.join(pargs)}")
                     t0 = time.time()
                     out.parent.mkdir(parents=True, exist_ok=True)
-                    with open(str(out) + ".log", "w", encoding="utf-8") as f:
+                    tmp_log = Path(str(out) + ".log")        # lerobot 이 output_dir 가 이미 있으면 거부하므로 밖에 쓰다가 옮깁니다
+                    with open(tmp_log, "w", encoding="utf-8") as f:
                         r = subprocess.run(argv, stdout=f, stderr=subprocess.STDOUT, text=True)
-                    Path(str(out) + ".log").replace(log) if out.exists() else None
+                    if out.exists():
+                        tmp_log.replace(log)
                     row["train_min"] = round((time.time() - t0) / 60, 1)
                     if r.returncode != 0:
-                        tail = Path(str(out) + ".log").read_text(encoding="utf-8", errors="replace")[-400:] if Path(str(out) + ".log").exists() else ""
+                        got = log if log.is_file() else tmp_log
+                        tail = got.read_text(encoding="utf-8", errors="replace")[-400:] if got.is_file() else ""
                         row["error"] = f"train rc={r.returncode}: {tail.strip().splitlines()[-1] if tail else ''}"
                         rows.append(row)
                         print("  !! 실패:", row["error"])

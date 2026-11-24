@@ -256,10 +256,12 @@ def needs_repair(root: Path) -> bool:
     if not (root / "meta" / "info.json").exists():
         return False
     try:
-        load_episodes(root)
-        return False
+        eps = load_episodes(root)
     except Exception:
         return True
+    # 이어서 수집하다 끊기면 색인은 읽혀도 info.json 의 total_episodes 보다 적습니다 (lerobot 은 색인을 10개씩 모아 씀)
+    total = json.loads((root / "meta" / "info.json").read_text()).get("total_episodes")
+    return total is not None and len(eps) != total
 
 
 def repair_dataset(root) -> str | None:

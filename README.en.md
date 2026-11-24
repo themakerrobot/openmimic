@@ -44,7 +44,7 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
   The conversion measures error against PyTorch and inference time on each device.
 - **Native Windows** — the same features as Ubuntu, without WSL. Datasets · calibration · models move between the two as they are.
 - **Single or bimanual** — SO-ARM101 and ROBOTIS OMX, one arm or two. Switching is one button.
-- **Train where you like** — your PC's NVIDIA GPU, a Jetson Thor or an Intel integrated GPU. If that takes too long, rent a Hugging Face cloud GPU (HF Jobs)
+- **Train where you like** — your PC's Intel integrated GPU, an NVIDIA GPU or a Jetson Thor. If that takes too long, rent a Hugging Face cloud GPU (HF Jobs)
   by the hour just for that (from $0.40/h for a T4, shown on the training screen — only then is the dataset uploaded to a private repo in your account).
 - **Safety for the arms** — a power check before starting blocks swapped adapters, and servo temperature and voltage are watched during a run with automatic stop.
 - **Good data** — actual collect rate on screen, episode review with synced cameras · 3D · joint plots, bulk delete of bad episodes, repair of broken datasets.
@@ -57,7 +57,7 @@ Start OpenMimic on the PC the arms are plugged into, then open it from a laptop 
 |---|---|
 | Arms | **SO-ARM101** (Feetech STS3215) · **ROBOTIS OMX** (Dynamixel) — single / bimanual |
 | OS | **Ubuntu** 22.04 · 24.04 · 26.04 · **Windows** 10 · 11 (native) |
-| Training | On-device: NVIDIA GPU · Jetson Thor · Intel integrated GPU (XPU) · Optional: HF Jobs cloud GPU (by the hour) |
+| Training | On-device: Intel integrated GPU (XPU) · NVIDIA GPU · Jetson Thor · Optional: HF Jobs cloud GPU (by the hour) |
 | Rollout (on-device) | Intel Core Ultra **NPU** / GPU / CPU (OpenVINO FP16 · INT8) · NVIDIA GPU · Jetson Thor |
 | Policies | ACT · ACT2 · Diffusion · SmolVLA — [comparison](docs/POLICIES.md) (Korean) |
 

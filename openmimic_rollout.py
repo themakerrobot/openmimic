@@ -70,6 +70,8 @@ class Monitor:
                        "device": device, "precision": precision, "err": ""}
         self.extra = None                      # OVEngine 같은 곳에서 추가 통계 (callable)
         self.guard = None                      # openmimic_health.HealthGuard — 연결 뒤 생성
+        self.robot = None                      # 연결한 팔 — 시작 도중 실패하면 토크를 풀려고 잡아 둡니다
+        self.shutdown_event = None             # lerobot 의 종료 이벤트 (build_rollout_context 에서 받음)
         self.on = True
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -86,7 +88,13 @@ class Monitor:
                 if why:
                     say(f"[openmimic] 서보 상태 이상으로 멈춥니다: {why}")
                     mon.set(health_stop=why)
-                    P.interrupt_self()     # 작업 탭 '중지' 와 같은 경로 (시작 자세 복귀·토크 해제)
+                    # 작업 탭 '중지' 와 같은 정리 경로(시작 자세 복귀·토크 해제)지만 신호는 쓰지 않습니다 —
+                    # lerobot 은 두 번째 신호에서 sys.exit 하므로, 여기서 신호를 쓰면 사람이 누른 '중지' 가
+                    # 시작 자세 복귀 도중의 강제 종료가 돼 토크가 남을 수 있습니다. 종료 이벤트만 켭니다.
+                    if mon.shutdown_event is not None:
+                        mon.shutdown_event.set()
+                    else:
+                        P.interrupt_self()
             mon.ticks.append(time.monotonic())
             for key, v in o.items():
                 if getattr(v, "ndim", 0) == 3:
@@ -100,6 +108,7 @@ class Monitor:
 
         def connect(*a, **k):
             mon.set(phase="connecting")
+            mon.robot = robot
             r = c(*a, **k)
             try:
                 import openmimic_health
@@ -118,9 +127,26 @@ class Monitor:
         return robot
 
     def install(self):
+        import lerobot.rollout as lr_pkg
         import lerobot.rollout.context as ctx
         orig_make = ctx.make_robot_from_config
         ctx.make_robot_from_config = lambda cfg: self.wrap_robot(orig_make(cfg))
+
+        # lerobot_rollout 이 'from lerobot.rollout import build_rollout_context' 로 가져가기 전에 감쌉니다 (main 에서 그 뒤에 import).
+        # 종료 이벤트를 받아 두고, 팔을 연결한 뒤 준비 단계(관측 확인·엔진 생성 등)에서 실패하면 토크를 풀고 끝냅니다 —
+        # 그 단계는 lerobot 의 try/finally(teardown) 밖이라 그냥 두면 팔이 힘이 들어간 채 남습니다.
+        orig_build = lr_pkg.build_rollout_context
+        mon_ = self
+
+        def build_rollout_context(cfg, shutdown_event, *a, **k):
+            mon_.shutdown_event = shutdown_event
+            try:
+                return orig_build(cfg, shutdown_event, *a, **k)
+            except BaseException:
+                _release(mon_.robot)
+                raise
+
+        lr_pkg.build_rollout_context = build_rollout_context
 
         from lerobot.rollout.inference.sync import SyncInferenceEngine
         orig_get = SyncInferenceEngine.get_action
@@ -141,7 +167,11 @@ class Monitor:
 
         def _teardown_hardware(strategy, hw, *a, **k):
             mon.set(phase="returning")
-            return td(strategy, hw, *a, **k)
+            try:
+                return td(strategy, hw, *a, **k)
+            finally:
+                # 시작 자세 복귀 도중 두 번째 '중지'(SystemExit) 등으로 lerobot 이 disconnect 를 건너뛰어도 토크는 풉니다
+                _release(getattr(hw.robot_wrapper, "inner", None))
 
         RolloutStrategy._teardown_hardware = _teardown_hardware
 
@@ -271,6 +301,17 @@ def main(argv=None):
     if mon:
         mon.stop("done")
     return 0
+
+
+def _release(robot):
+    """팔이 아직 연결돼 있으면 disconnect(토크 해제 + 포트 닫기). 실패해도 예외를 내지 않습니다."""
+    if robot is None or not getattr(robot, "is_connected", False):
+        return
+    try:
+        robot.disconnect()
+        say("[openmimic] 팔 토크를 풀고 연결을 닫았습니다")
+    except Exception as e:      # noqa: BLE001
+        say(f"[openmimic] 팔 연결 해제 실패 — 전원을 내려 토크를 푸세요: {e}")
 
 
 def _answer_calibration_prompt():

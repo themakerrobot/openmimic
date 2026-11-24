@@ -66,11 +66,21 @@ def read_board_power(bus):
     lim = {}
     for key in ("vmin", "vmax"):
         try:
-            vals = [v for v in _sread(bus, R[key]).values() if v > 0]
-            lim[key] = (max(vals) if key == "vmin" else min(vals)) / 10.0 if vals else None
+            per = {m: v / 10.0 for m, v in _sread(bus, R[key]).items() if v > 0}
         except Exception:      # noqa: BLE001 — 한계값을 못 읽으면 그 판정만 건너뜁니다
-            lim[key] = None
+            per = {}
+        # 판정은 모터마다 자기 한계와 비교합니다(vmin_m/vmax_m) — 한 버스에 정격이 다른 모터가 섞여도 잘못 막지 않게.
+        # vmin/vmax 는 표시용 요약(모터 중 가장 엄격한 값)
+        lim[key + "_m"] = per
+        lim[key] = (max(per.values()) if key == "vmin" else min(per.values())) if per else None
     return {"volts": volts, "median": round(statistics.median(volts.values()), 2) if volts else None, **lim}
+
+
+def over_limits(volts, vmin_m, vmax_m):
+    """모터별 한계를 벗어난 것 → (낮은 쪽 [(모터, V, 한계)], 높은 쪽 [...]). 가장 많이 벗어난 것이 앞."""
+    low = sorted(((m, v, vmin_m[m]) for m, v in volts.items() if vmin_m.get(m) and v < vmin_m[m]), key=lambda x: x[1] - x[2])
+    high = sorted(((m, v, vmax_m[m]) for m, v in volts.items() if vmax_m.get(m) and v > vmax_m[m]), key=lambda x: x[2] - x[1])
+    return low, high
 
 
 def judge_power(robot, role, p, remembered=None):
@@ -86,11 +96,13 @@ def judge_power(robot, role, p, remembered=None):
     med = p.get("median")
     if med is None:
         return "warn", ["전압을 읽지 못했습니다"]
-    lo_v, hi_v = min(p["volts"].values()), max(p["volts"].values())
-    if p.get("vmax") and hi_v > p["vmax"]:
-        add("block", f"{hi_v:.1f} V — 서보 전압 한계 {p['vmax']:.1f} V 를 넘습니다. 즉시 전원을 분리하고 어댑터를 확인하세요")
-    if p.get("vmin") and lo_v < p["vmin"]:
-        add("block", f"{lo_v:.1f} V — 서보 최저 전압 {p['vmin']:.1f} V 보다 낮습니다. 어댑터·케이블을 확인하세요")
+    low, high = over_limits(p["volts"], p.get("vmin_m") or {}, p.get("vmax_m") or {})
+    if high:
+        m, v, lim = high[0]
+        add("block", f"{m} {v:.1f} V — 서보 전압 한계 {lim:.1f} V 를 넘습니다. 즉시 전원을 분리하고 어댑터를 확인하세요")
+    if low:
+        m, v, lim = low[0]
+        add("block", f"{m} {v:.1f} V — 서보 최저 전압 {lim:.1f} V 보다 낮습니다. 어댑터·케이블을 확인하세요")
     if robot == "so101":
         sysname = volt_system(med)
         if role == "leader" and sysname == "12V":
@@ -138,8 +150,9 @@ class HealthGuard:
     def __init__(self, buses, period=PERIOD_S):
         self.buses = list(buses)
         self.period = period
-        self.tlim, self.vmin, self.vmax = {}, {}, {}     # 접두사 → 값 (팔 단위, 모터 중 가장 엄격한 값)
-        self.base = {}                                    # 접두사 → 시작 전압 중앙값
+        self.tlim, self.vmin, self.vmax = {}, {}, {}     # 접두사 → {모터: 한계} (모터마다 자기 EEPROM 값과 비교)
+        self.base = {}                                    # 접두사 → {모터: 시작 전압} (강하는 모터마다 자기 시작값과 비교)
+        self._volts = {}                                  # 접두사 → 마지막으로 읽은 {모터: 전압}
         self.temp, self.volt = {}, {}                     # 표시 이름 → 값
         self.level, self.msgs, self.stop_reason = "ok", [], ""   # stop_reason 은 처음 멈춘 이유 (계속 남김)
         self.stopping = ""                                       # 이번 측정에서 정지 조건인 문장 (조건이 풀리면 "")
@@ -160,19 +173,21 @@ class HealthGuard:
                     self.err0[self._key(pfx, m)] = e
             except Exception:      # noqa: BLE001
                 pass
-            for key, dst, pick in (("tlim", self.tlim, min), ("vmin", self.vmin, max), ("vmax", self.vmax, min)):
+            for key, dst in (("tlim", self.tlim), ("vmin", self.vmin), ("vmax", self.vmax)):
                 try:
-                    vals = [v for v in _sread(bus, R[key]).values() if v > 0]
+                    per = {m: v / (10.0 if key != "tlim" else 1) for m, v in _sread(bus, R[key]).items() if v > 0}
                 except Exception:      # noqa: BLE001
-                    vals = []
-                if vals:
-                    dst[pfx] = pick(vals) / (10.0 if key != "tlim" else 1)
+                    per = {}
+                if per:
+                    dst[pfx] = per
         self._started = True
         self.poll(force=True)
+        # 시작 순간 이미 정지 조건이면(직전 작업으로 뜨거운 서보, 낮은 전압) 그 판정을 여기서 소비하지 않습니다 —
+        # poll() 은 '새로 난' 정지만 돌려주므로, 지우지 않으면 수집·실행이 끝까지 멈추지 않습니다. 다음 정기 poll 이 돌려줍니다.
+        self.stop_reason = ""
         for pfx, _ in self.buses:
-            vs = [v for k, v in self.volt.items() if (k.startswith(pfx + "_") if pfx else True)]
-            if vs:
-                self.base[pfx] = statistics.median(vs)
+            if self._volts.get(pfx):
+                self.base[pfx] = dict(self._volts[pfx])
 
     def poll(self, force=False):
         """새로 정지 판정이 나면 그 이유(문장), 아니면 ""."""
@@ -193,6 +208,7 @@ class HealthGuard:
                 continue
             for m, t in temps.items():
                 self.temp[self._key(pfx, m)] = t
+            self._volts[pfx] = volts
             for m, v in volts.items():
                 self.volt[self._key(pfx, m)] = v
             for m, e in errs.items():
@@ -203,28 +219,33 @@ class HealthGuard:
                     msgs.append(("stop", f"{side}{m}: 서보 보호 동작 ({', '.join(new)})"))
                 if kept:
                     msgs.append(("warn", f"{side}{m}: 시작 때부터 보호 플래그 ({', '.join(kept)}) — 끝나면 팔 불량 점검"))
-            tl = self.tlim.get(pfx)
-            if tl and temps:
-                m, t = max(temps.items(), key=lambda kv: kv[1])
-                if t >= tl - TEMP_STOP_MARGIN:
-                    msgs.append(("stop", f"{side}{m}: {t}°C — 서보 온도 한계 {tl:g}°C 에 가까움. 식힌 뒤 막힘·과부하 원인 확인"))
-                elif t >= tl - TEMP_WARN_MARGIN:
-                    msgs.append(("warn", f"{side}{m}: {t}°C — 뜨거워지는 중 (한계 {tl:g}°C)"))
+            tls = self.tlim.get(pfx) or {}
+            if tls and temps:
+                # 한계에 가장 가까운 모터 (모터마다 자기 한계)
+                near = [(tls[m] - t, m, t, tls[m]) for m, t in temps.items() if m in tls]
+                if near:
+                    _, m, t, tl = min(near)
+                    if t >= tl - TEMP_STOP_MARGIN:
+                        msgs.append(("stop", f"{side}{m}: {t}°C — 서보 온도 한계 {tl:g}°C 에 가까움. 식힌 뒤 막힘·과부하 원인 확인"))
+                    elif t >= tl - TEMP_WARN_MARGIN:
+                        msgs.append(("warn", f"{side}{m}: {t}°C — 뜨거워지는 중 (한계 {tl:g}°C)"))
             if volts:
-                lo = min(volts.values())
-                vmin, vmax = self.vmin.get(pfx), self.vmax.get(pfx)
-                if vmin and lo < vmin:
-                    msgs.append(("stop", f"{side}공급 전압 {lo:.1f} V — 서보 최저 전압 {vmin:.1f} V 아래. 어댑터 용량·케이블 확인"))
-                if vmax and max(volts.values()) > vmax:
-                    msgs.append(("stop", f"{side}공급 전압 {max(volts.values()):.1f} V — 서보 전압 한계 {vmax:.1f} V 초과. 전원 분리"))
-                base = self.base.get(pfx)
-                if base:
-                    sag = (base - lo) / base
+                low, high = over_limits(volts, self.vmin.get(pfx) or {}, self.vmax.get(pfx) or {})
+                if low:
+                    m, v, lim = low[0]
+                    msgs.append(("stop", f"{side}{m} 공급 전압 {v:.1f} V — 서보 최저 전압 {lim:.1f} V 아래. 어댑터 용량·케이블 확인"))
+                if high:
+                    m, v, lim = high[0]
+                    msgs.append(("stop", f"{side}{m} 공급 전압 {v:.1f} V — 서보 전압 한계 {lim:.1f} V 초과. 전원 분리"))
+                base = self.base.get(pfx) or {}
+                drops = [((base[m] - v) / base[m], m, v, base[m]) for m, v in volts.items() if base.get(m)]
+                if drops:
+                    sag, m, v, b0 = max(drops)
                     if sag >= SAG_STOP:
-                        msgs.append(("stop", f"{side}공급 전압 {lo:.1f} V — 시작 때 {base:.1f} V 에서 {sag * 100:.0f}% 떨어짐. "
+                        msgs.append(("stop", f"{side}{m} 공급 전압 {v:.1f} V — 시작 때 {b0:.1f} V 에서 {sag * 100:.0f}% 떨어짐. "
                                      "어댑터 전류가 모자라거나 커넥터 접촉 불량"))
                     elif sag >= SAG_WARN:
-                        msgs.append(("warn", f"{side}공급 전압 {lo:.1f} V — 시작 때 {base:.1f} V 에서 {sag * 100:.0f}% 떨어짐 "
+                        msgs.append(("warn", f"{side}{m} 공급 전압 {v:.1f} V — 시작 때 {b0:.1f} V 에서 {sag * 100:.0f}% 떨어짐 "
                                      "(여러 관절이 동시에 힘을 쓸 때 전원 강하)"))
         self.msgs = [m for _, m in msgs]
         self.stopping = next((m for lv, m in msgs if lv == "stop"), "")

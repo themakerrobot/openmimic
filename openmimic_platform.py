@@ -18,6 +18,7 @@ import re
 import signal
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 IS_WIN = os.name == "nt"
@@ -265,7 +266,9 @@ def remove_dir(path) -> None:
     import shutil
     if IS_WIN:
         p = Path(path)
-        tmp = p.with_name(f".{p.name}.del")
+        # 이름은 매번 다르게 — 지난번에 잠긴 파일 때문에 다 못 지운 .<이름>.del 이 남아 있어도 다시 지울 수 있게
+        # (목록은 점으로 시작하는 폴더를 숨깁니다)
+        tmp = p.with_name(f".{p.name}.{time.time_ns()}.del")
         os.rename(p, tmp)
         shutil.rmtree(tmp, ignore_errors=True)
         return

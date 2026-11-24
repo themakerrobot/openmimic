@@ -69,7 +69,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1      # "=== 완료 ===" �
 
 - **다른 사람 환경을 바꾸지 않습니다** — conda 는 설치만 하고(`conda init` 안 함) 셸 설정·PATH 를 건드리지 않으며, 패키지는 전부 `openmimic` 가상환경 안에 들어갑니다
 - 데이터·HF 캐시·캘리브레이션은 레포 폴더 `data/` 아래에 둡니다
-- 업데이트·파일 위치·플랫폼 등 자세한 내용은 **[INSTALL.md](INSTALL.md)**
+- 업데이트·파일 위치·플랫폼 등 자세한 내용은 아래 [설치 상세](#설치-상세) 부터
 
 ## 설치 상세
 
@@ -96,7 +96,7 @@ Diffusion·SmolVLA 패키지까지 설치합니다. 기기 종류는 자동으�
 | `cuda` | Ubuntu · x86_64 + NVIDIA GPU | CUDA 13 휠 | PyTorch (GPU) |
 | `win-cuda` | Windows + NVIDIA GPU (`install.ps1`) | CUDA 13 휠 (`torch<2.12 torchvision<0.27`) | PyTorch (GPU) |
 
-셋업 화면 맨 아래 "4 · 기타" 에 이 기기의 플랫폼 이름이 나옵니다.
+**로봇 › 포트·카메라** 맨 아래 "4 · 기타" 의 **고급** 을 펼치면 이 기기의 플랫폼 이름이 나옵니다.
 
 - 자동 판정이 틀리면 `OPENMIMIC_PLATFORM=intel ./lerobot_conda.sh` 처럼 지정합니다.
 - Intel 내장 GPU 로 학습까지 해 보려면 `OPENMIMIC_PLATFORM=intel OPENMIMIC_TORCH=xpu ./lerobot_conda.sh` (**실험적** — [INTEL.md](INTEL.md)).
@@ -113,7 +113,7 @@ Diffusion·SmolVLA 패키지까지 설치합니다. 기기 종류는 자동으�
 - 시스템에 하는 일: apt 기본 도구 몇 개(git, curl, build-essential, pkg-config, libgl1, libglib2.0, v4l-utils),
   시리얼 보드 udev 권한 규칙, 설치한 계정을 `dialout`·`video`(Intel 은 `render`) 그룹에 추가 — **재로그인 후** 반영.
 - NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다.
-- 지우기: `rm -rf ~/project/openmimic ~/miniforge3` (다른 conda 를 이미 쓰고 있었다면 `~/miniforge3` 가 이 스크립트가 만든 것인지 확인 후)
+- 지우기: 자동 시작을 켰다면 먼저 `./openmimic.sh autostart off`, 그다음 `rm -rf ~/project/openmimic ~/miniforge3` (다른 conda 를 이미 쓰고 있었다면 `~/miniforge3` 가 이 스크립트가 만든 것인지 확인 후)
 
 ## Windows 10 / 11 — `install.ps1`
 
@@ -138,9 +138,9 @@ lerobot 고정 커밋 `e40b58a`(`lerobot-src` 에 clone 후 `pip install -e`), F
   읽고 쓰다 깨지거나 멈춥니다.
 - `git` 은 미리 있어야 합니다 (`winget install --id Git.Git -e`). 사용자 폴더 경로에 공백이 있으면 conda 를 설치할 수 없어 멈춥니다.
 - 강제 지정: `$env:OPENMIMIC_PLATFORM='win-intel'` · Intel GPU 학습 시험: `$env:OPENMIMIC_TORCH='xpu'` (실험적 — 휠을 못 받으면 CPU 휠로 계속.
-  이미 CPU 휠로 설치한 기기에서 다시 돌리면 CPU 휠을 지우고 XPU 휠로 바꿉니다. Core Ultra 200V 에서 설치·장치 인식 확인, 학습은 확인 전).
+  이미 CPU 휠로 설치한 기기에서 다시 돌리면 CPU 휠을 지우고 XPU 휠로 바꿉니다. Core Ultra 200V 에서 설치·장치 인식·ACT 학습까지 확인).
 - 영상: lerobot 이 쓰는 `torchcodec` 은 지우고 PyAV 로 통일합니다 (Linux 와 같음). 디코딩은 torchcodec 이 없으면 lerobot 이 PyAV 로 바꾸고,
-  인코딩(기본 libsvtav1)은 원래 PyAV 입니다.
+  인코딩도 PyAV 입니다 (OpenMimic 수집은 H.264(libx264) — [DEVELOPMENT.md](DEVELOPMENT.md) 의 녹화 영상 인코더).
 
 | 무엇 | Windows 경로 |
 |---|---|
@@ -160,6 +160,12 @@ OpenMimic.bat                  # 탐색기에서 더블클릭 = 이 창에서 �
 ```
 
 실행 정책 때문에 막히면 앞에 `powershell -ExecutionPolicy Bypass -File` 을 붙입니다.
+
+- **업데이트**: 보통은 `OpenMimic.bat update` 만 하면 됩니다. 새로 필요한 패키지가 생긴 업데이트라면 OpenMimic 을 끄고
+  `powershell -ExecutionPolicy Bypass -File .\install.ps1` 을 한 번 더 돌립니다 — 있는 conda 환경은 그대로 두고 패키지만 맞춥니다
+  (Intel GPU 학습용 XPU 판이면 그 창에서 먼저 `$env:OPENMIMIC_TORCH='xpu'`. cmd 에서는 `set OPENMIMIC_TORCH=xpu`).
+- **지우기**: 자동 시작을 켰다면 먼저 `.\openmimic.ps1 autostart off`, 그다음 레포 폴더를 지웁니다. Miniforge 는 설정 → 앱 → 설치된 앱에
+  Miniforge3 가 있으면 거기서 제거하고, 없으면 `%USERPROFILE%\miniforge3` 폴더를 지웁니다 (다른 conda 를 이미 쓰고 있었다면 이 스크립트가 만든 것인지 확인 후).
 
 ### Windows 에서 포트·카메라
 
@@ -263,6 +269,9 @@ OPENMIMIC_TOKEN=원하는값 ./openmimic.sh start    # 토큰 직접 지정
 OPENMIMIC_AUTH=on        ./openmimic.sh start    # openmimic_token.txt 에 자동 생성
 ```
 
+`openmimic_token.txt` 가 생기면 그다음부터는 환경 변수 없이 켜도(update·restart·자동 시작 포함) 인증이 유지됩니다.
+끄려면 그 파일을 지우고 다시 켭니다. `OPENMIMIC_TOKEN` 으로 직접 지정한 값은 파일에 남지 않으므로 켤 때마다 넣어야 합니다.
+
 인증과 별개로, 다른 웹사이트가 브라우저를 통해 몰래 보내는 요청은 받지 않습니다.
 
 ## 터미널 도구
@@ -281,4 +290,4 @@ python tools_armcheck.py --port COM5 --role follower                         # W
 
 ### 데이터셋 복구
 
-Datasets 화면의 **복구** 버튼과 같은 동작입니다: `python tools_dsrepair.py <데이터셋 폴더>` (고치기 전에 백업합니다).
+**데이터 › 데이터셋** 의 **복구** 버튼과 같은 동작입니다: `python tools_dsrepair.py <데이터셋 폴더>` (고치기 전에 백업합니다).

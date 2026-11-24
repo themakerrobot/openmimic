@@ -53,7 +53,8 @@ function Get-RunningPid {
         $p = (Get-Content -LiteralPath $PidFile -ErrorAction SilentlyContinue | Select-Object -First 1)
         if ($p) {
             $proc = Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$p)" -ErrorAction SilentlyContinue
-            if ($proc -and (($proc.CommandLine -match 'main\.py') -or (-not $proc.CommandLine -and $proc.Name -eq 'python.exe'))) {
+            if ($proc -and ((($proc.CommandLine -match 'main\.py') -and ($proc.CommandLine -notmatch '--worker')) -or
+                            (-not $proc.CommandLine -and $proc.Name -eq 'python.exe'))) {
                 return [int]$p
             }
         }
@@ -98,8 +99,15 @@ function Start-Foreground {
     Write-Host "끄려면 이 창에서 Ctrl+C — 수집·학습 같은 작업은 계속 돕니다. 창을 닫으면 진행 중인 작업도 같이 꺼집니다."
     Write-Host ""
     Set-Location $Dir
-    Invoke-Native { & $py -X utf8 -u main.py }
+    Invoke-Native { & $py -X utf8 -u main.py }        # 출력은 그대로 이 창에 (변수로 받으면 로그가 안 보임)
+    $code = $LASTEXITCODE
     Write-Host ""
+    # 오류로 꺼졌으면(포트 사용 중 등) 0 이 아닌 코드로 끝내 OpenMimic.bat 이 창을 닫지 않고 멈추게 합니다.
+    # Ctrl+C(STATUS_CONTROL_C_EXIT = -1073741510) 와 0 은 정상 종료로 봅니다.
+    if ($code -and $code -ne 0 -and $code -ne -1073741510) {
+        Write-Host "OpenMimic 이 오류로 꺼졌습니다 (종료 코드 $code) — 위 메시지를 확인하세요"
+        exit 1
+    }
     Write-Host "OpenMimic 이 꺼졌습니다 (다시 켜기: .\openmimic.ps1 start)"
 }
 

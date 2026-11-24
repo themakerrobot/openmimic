@@ -212,6 +212,11 @@ def cloud_train(root, name, flavor, train_args):
     repo = f"{st['user']}/{name}"
     push_dataset(root, repo, private=True)
     argv = [a for a in train_args if not a.startswith(("--dataset.repo_id=", "--dataset.root=", "--output_dir="))]
+    if any(a.startswith("--policy.path=") for a in argv) and not any(a.startswith("--policy.repo_id=") for a in argv):
+        # --policy.path 정책(SmolVLA)은 lerobot submit_to_hf 가 repo_id 를 채우기 전에 validate() 가
+        # 'save_checkpoint_to_hub requires --policy.repo_id' 로 거부합니다. 원격 설정의 repo_id 는
+        # submit_to_hf 가 <user>/<job_name>_<시각> 으로 다시 덮어쓰므로 이 값은 검증 통과용입니다.
+        argv.append(f"--policy.repo_id={st['user']}/{name}")
     argv = [sys.executable, "-m", "lerobot.scripts.lerobot_train", f"--dataset.repo_id={repo}", *argv,
             f"--job.target={flavor}", f'--job.tags=["{OPENMIMIC_TAG}"]', "--save_checkpoint_to_hub=true"]
     say("[hub] HF Jobs 제출: " + " ".join(argv[2:]))

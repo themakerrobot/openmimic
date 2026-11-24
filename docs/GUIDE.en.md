@@ -128,7 +128,7 @@ Choose a dataset and a **policy** and train. Loss, grad norm and learning-rate g
 | **ACT** (default) | Around 50 demos, light and fast — runs on the Intel NPU |
 | **ACT2** (experimental) | ACT with switchable image augmentation, chunk interpolation, DINOv2 backbone and flow head for comparison — runs on the Intel NPU |
 | **Diffusion** | Tasks with several valid motions |
-| **SmolVLA** | Fine-tunes a 450M pretrained model that uses the task description (language) (GPU recommended) |
+| **SmolVLA** | Fine-tunes a 450M pretrained model that uses the task description (language) (GPU recommended). Uses up to 3 cameras; camera names are matched automatically |
 
 - A dataset/policy mismatch is flagged in red **before starting** (camera resolution, single/bimanual, etc.)
 - 10 episodes and a few thousand steps only check the workflow. For the arm to actually grasp, you need **about 50 demos** and enough steps (tens of thousands) — that takes long on an integrated GPU, so HF Jobs is recommended
@@ -192,7 +192,7 @@ On an Intel Core Ultra PC, setup, collection and review work the same, and **ACT
 
 1. Training — train on this PC's integrated GPU (XPU, slow), or import a model trained on HF Jobs (cloud) or an NVIDIA device with **Training › Models → Import a model from another device**
 2. **Training › Models → OpenVINO convert** (FP16 · INT8) — shows error and inference time for each of NPU · GPU · CPU
-3. **Rollout → inference engine: OpenVINO · NPU**
+3. **Rollout → inference engine: OpenVINO · NPU** — device/precision combinations that failed to compile or showed **large error** in the conversion table are blocked before running
 
 Details and measurements: **[INTEL.en.md](INTEL.en.md)**
 
@@ -232,7 +232,7 @@ OpenMimic watches the points where low-cost servo arms actually fail: swapped ad
 | Several cameras drop out | Robot › Ports & cameras → Cameras **format** to MJPG, and plug cameras into the PC's own ports |
 | "Another job is running" / "Running: manual-control" | The Control tab is open (also on another device or browser — closing it releases the arms), or collection · port watch · calibration is running — finish it in ☰ → Jobs. Training only blocks collection and rollout; setup, calibration, control and switching projects work during training |
 | Collection ends right after starting | Read the error and log left on the collection screen. A new dataset with no saved episodes is removed automatically, so you can start again with the same name |
-| Dataset shows "not finalized" | Click the red **Not finalized · Repair** in the dataset list |
+| Dataset shows "not finalized" | Click the red **Not finalized · Repair** in the dataset list (datasets interrupted while resuming a collection show up here too) |
 | Rollout ends immediately | **Likely cause** on the Rollout screen and the log |
 | "The policy uses camera …" / "joint count …" | Camera names or single/bimanual differ from training — make **Robot › Ports & cameras** match training |
 | Screen looks wrong after an update | `./openmimic.sh restart` (on Windows `OpenMimic.bat restart`) + hard refresh in the browser (Ctrl+Shift+R) |

@@ -249,6 +249,16 @@ lerobot `bus.connect()` 는 모터 확인 실패 때 포트를 연 채로 예외
 멈춘 모터 하나에서 끝나고 나머지(양팔이면 다른 팔 전체)에 토크가 남습니다. E-STOP·해제·토크 끄기는 모터마다 따로 쓰고
 통신 성공만 봅니다. E-STOP 은 팔로워부터 끕니다.
 
+**제어 탭 WebSocket(`/ws/control`)의 E-STOP 우선.** 토크·팔로우 명령은 단일 스레드 풀(`cmd_pool`)에서 돌려 수신 루프가 계속 메시지를 읽게 하고,
+`estop` 은 받는 즉시 처리합니다 — 세대 번호(`stop["n"]`)를 올려 아직 시작하지 않은 토크 켜기·팔로우 켜기를 무효로 하고(`set_torque(on, allow=)` 가
+락 안에서 다시 확인), 모든 팔의 팔로우를 끈 뒤 팔마다 스레드 하나씩 동시에 토크를 끕니다(`_torque_off_parallel`, 응답 없는 팔이 다른 팔을 붙잡지 않게).
+토크를 끄면 팔로우도 같이 꺼집니다. 탭을 닫거나 연결이 끊기면 세대 번호 → 팔로우 끄기 → 팔 루프 정지 → 팔 연결 해제 → 명령 풀 정리 →
+리더 해제 → 카메라 닫기 순으로 정리합니다(카메라가 마지막 — 팔부터 놓음).
+
+**OMX 리더 연결 순서**: `bus.connect()` → 토크 끄기 → 보드 값 스냅샷 → (파일과 다르면) `write_calibration` → `configure()`.
+Dynamixel 은 토크가 켜진 채로 EEPROM(`Homing_Offset` 등)에 쓰면 거부되므로 쓰기 전에 끕니다. 캘리브레이션 세션은 연결 직후 보드 값을
+스냅샷해 두고(`_snapshot_calib`), 취소하면 그 값으로 되돌립니다 — 파일을 먼저 보드에 쓴 뒤의 값으로 되돌리면 취소가 아무 일도 하지 않습니다.
+
 ## 추종 오차 감시
 
 제어의 명령 적분기는 목표 도달 후 쓰기를 멈추는데, 서보가 명령을 놓치면(막힘·보호·유실) 영원히 어긋납니다.
@@ -285,7 +295,7 @@ OMX(Dynamixel)는 계통 판정 출처가 없어 EEPROM 한계값과 지난번 �
 `Hardware_Error_Status`)를 `sync_read` 합니다. 반이중 버스라 다른 스레드에서 읽으면 패킷이 섞이므로, 제어 루프와 같은 스레드에서
 `get_observation` 직후에 `poll()` 을 부릅니다 (실행 = `openmimic_rollout` 의 `get_observation` 감싸기, 수집 = worker 의 같은 감싸기,
 제어 = 팔 루프의 1 초 읽기 자리). 연결 직후 EEPROM 한계값(`Max_Temperature_Limit`·`Temperature_Limit`, 전압 한계)과
-기준 전압(첫 측정 중앙값)을 잡습니다.
+기준 전압(모터마다 첫 측정값)을 잡습니다.
 
 | 조건 | 수준 | 근거 |
 |---|---|---|
@@ -294,8 +304,10 @@ OMX(Dynamixel)는 계통 판정 출처가 없어 EEPROM 한계값과 지난번 �
 | 전압 < `Min_Voltage_Limit` 또는 > `Max_Voltage_Limit` | 정지 | [EEPROM] |
 | 시작 때보다 20% / 10% 이상 강하 | 정지 / 경고 | [경험값] |
 
-EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 않습니다. 정지하면:
-- **실행** — 자기 자신에게 SIGINT (작업 탭 '중지' 와 같은 경로: lerobot 이 시작 자세 복귀·토크 해제)
+EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 않습니다. 전압·온도 한계와 강하는 **모터마다 자기 EEPROM 값·시작값**과
+비교합니다(`over_limits`) — 한 버스에 정격이 다른 모터가 섞여도(예: 12V 급 + 5V 급) 한 모터의 한계를 다른 모터에 대지 않게. 시작 전 점검(`judge_power`)도 같습니다.
+시작 순간 이미 정지 조건이면(직전 작업으로 뜨거운 서보 등) `start()` 가 그 판정을 소비하지 않아, 첫 정기 측정에서 정지합니다. 정지하면:
+- **실행** — lerobot 롤아웃의 `shutdown_event` 를 세움(`build_rollout_context` 를 감싸 잡아 둠, 없으면 자기 자신에게 SIGINT) — 작업 탭 '중지' 와 같은 경로: lerobot 이 시작 자세 복귀·토크 해제
 - **수집** — `q` 와 같은 경로 (녹화 중이던 에피소드는 버리고 끝냄 — 이상 구간을 데이터에 남기지 않음)
 - **제어** — 토크는 두고(팔이 떨어지지 않게) 리더 팔로우를 끄고 명령을 현재 위치로 고정, 정지 조건이 풀릴 때까지 슬라이더 명령 무시
 
@@ -324,7 +336,9 @@ EEPROM 값이 0 이면(읽지 못함·설정 없음) 그 항목은 판정하지 
 그래서 `python main.py --worker record <jid>` 가 lerobot `record_loop()` 를 직접 부르고, 웹 버튼이 `events` 를 바꿉니다.
 데이터셋 생성·인코딩·저장 흐름과 인코더 기본값은 `lerobot_record.record()` / `DatasetRecordConfig` 와 같습니다.
 
-worker ↔ 웹은 파일로 통신합니다 (`/dev/shm/openmimic/<jid>/`): `status.json`(상태), `cam_<name>.jpg`(미리보기), `cmd`(s/n/r/q).
+worker ↔ 웹은 파일로 통신합니다 (`/dev/shm/openmimic/<jid>/`): `status.json`(상태), `cam_<name>.jpg`(미리보기), 키 명령(s/n/r/q).
+키는 누를 때마다 파일 하나(`cmd.<시각 ns>.<pid>.k`, 임시 파일 → `os.replace`)로 쓰고 worker 가 이름순으로 하나씩 가져갑니다 — 한 파일을 덮어쓰면
+빠르게 두 번 누른 키 중 앞의 것이 사라집니다. 예전 판의 `cmd` 파일도 계속 읽습니다.
 미리보기 JPEG 은 가로 480 px 이하로 줄이고(`PREVIEW_W`), 새 프레임이 없으면 다시 쓰지 않습니다 — 원본 해상도는 데이터셋에만 들어갑니다.
 새로 만든 데이터셋에 저장된 에피소드가 0개로 끝나면(연결 실패 등) worker 가 폴더를 지웁니다(`_drop_empty_new_dataset`) — 같은 이름으로 바로 다시 시작할 수 있게.
 수집 화면은 작업이 오류·서보 이상·비정상 종료로 끝나면 새로고침하지 않고 메시지와 로그를 남깁니다.
@@ -337,7 +351,7 @@ worker ↔ 웹은 파일로 통신합니다 (`/dev/shm/openmimic/<jid>/`): `stat
 - **대기(ready)** 는 `record_loop(dataset=None)` — 기록 없이 리더만 따라갑니다. 녹화는 `s` 를 눌렀을 때만
 - 단계에 맞지 않는 키는 무시 (`s` 는 대기에서만, `n`/`r` 은 녹화 중에만)
 - 프레임 0개 에피소드는 저장하지 않음
-- 끝낼 때 팔부터 놓고(팔마다 토크 해제·포트 닫기) 데이터셋을 마무리
+- 끝낼 때 팔부터 놓고(팔마다 토크 해제·포트 닫기 — `release_arms()`, 예외로 끝나도 `finally` 에서 한 번만) 데이터셋을 마무리(영상 인코딩이 길어도 팔이 토크를 잡은 채 기다리지 않게)
 - 양팔 이미지 기록 스레드 수는 관측 키로 셉니다 (`robot.cameras` 는 `wrist` 이름이 겹쳐 적게 셈)
 - 일시정지는 지원하지 않습니다 — v3.0 은 등간격 타임스탬프 전제
 - 대기 중 2초마다 루프를 끊고 온도를 읽습니다 (반이중 버스라 녹화 루프와 동시에 읽으면 안 됨)
@@ -374,6 +388,13 @@ worker ↔ 웹은 파일로 통신합니다 (`/dev/shm/openmimic/<jid>/`): `stat
 - 데이터셋 사용 중 판정은 작업 spec·CLI 인자를 정확히 비교 (녹화 중 삭제 방지)
 - JSON 파일은 임시 파일 + `os.replace` 로 원자적으로 씀
 - 작업 PID 재사용 방지 (`/proc/<pid>/stat` starttime 비교)
+- 시작 요청 묶음(`_START_PATHS`·`_START_PREFIXES`)에 이어서 학습·체크포인트 삭제·데이터셋 삭제·이름 바꾸기도 넣어, 확인과 시작 사이에 다른 작업이 끼지 않게
+- 요청 본문은 `jbody()` 로 읽습니다 — JSON 이 아니거나 객체가 아니면 400. `HTTPException` 도 화면이 읽는 `{"error": …}` 형식으로 돌려줌
+- 작업 id 는 `O_CREAT|O_EXCL` 로 만들어 같은 초에 두 작업이 같은 id 를 갖지 않음. 프로세스를 못 띄우면 만든 json·log 를 지움
+- 에피소드 삭제(제자리 편집)는 원본을 `<이름>_old` 로 옮기고 dsmeta 에 `backup_of` 를 남깁니다. 남의 것으로 표시된(또는 표시 없는) `<이름>_old` 가
+  이미 있으면 덮어쓰지 않고 거부
+- 토큰 비교는 바이트로(`secrets.compare_digest` 가 비 ASCII 문자열에서 예외를 내지 않게). `openmimic_token.txt` 가 있으면 환경 변수 없이도 인증이 켜짐
+- 카메라 스캔(`/api/setup/cameras`)은 제어 탭이 카메라를 잡고 있어도 거부 — 열려 있는 카메라를 스캔이 또 열지 않게 (수집·실행 중 거부와 같은 규칙)
 
 ## OpenVINO (Intel NPU / GPU / CPU)
 
@@ -412,6 +433,7 @@ OpenMimic 쪽
 - 작업 종류 `ovconvert` (spec 에 체크포인트). 롤아웃·다른 변환과 동시 실행 금지(지연 측정이 틀어지고 IR 을 덮어씀).
   OV 롤아웃은 작업 종류가 그대로 `rollout` 이라 배타·중지·체크포인트 삭제 보호가 기존 규칙을 따릅니다.
 - `/api/ov/status?ckpt=` · `/api/ov/convert` · `/api/rollout` 의 `engine: torch | ov:NPU | ov:GPU | ov:CPU`, `precision: fp16 | int8`.
+- `/api/rollout` 은 변환 때 그 장치·정밀도로 잰 결과가 컴파일 실패이거나 정합성 실패(`parity` 거짓)면 막습니다. 변환 때 없던 장치(측정 없음)는 막지 않습니다.
 
 ## 롤아웃 실행기·실시간 모니터·시도 기록
 
@@ -422,12 +444,15 @@ OpenMimic 쪽
   - `lerobot.rollout.context.make_robot_from_config` → 로봇 인스턴스의 `get_observation`(카메라 프레임·관절 실측·제어 주기),
     `send_action`(마지막 명령), `connect`(단계 표시)
   - `SyncInferenceEngine.get_action` → 틱별 시간. 최근 5 초 중앙값 = 보통 틱(큐에서 꺼내기), 최대 = 청크 계산
-  - `RolloutStrategy._teardown_hardware` → "시작 자세로 복귀 중" 단계
+  - `RolloutStrategy._teardown_hardware` → "시작 자세로 복귀 중" 단계, 끝나면(예외로 끝나도) 로봇이 아직 연결돼 있으면 `disconnect()`(토크 해제)
+  - `lerobot.rollout.build_rollout_context` → `shutdown_event` 를 잡아 두고(서보 감시 정지용), 만드는 도중 예외(정책 입력 불일치 등)면
+    이미 연결된 로봇을 `disconnect()` — lerobot 은 이 경우 teardown 을 부르지 않아 토크가 켜진 채 남습니다
 - 별도 스레드가 10 fps 로 `status.json`·`cam_*.jpg` 를 원자적으로 씁니다 (수집 worker 와 같은 규칙, 제어 루프에 인코딩 비용 없음).
   웹은 `/api/rollout/status/<jid>`, `/api/runstream/<jid>/<cam>`(MJPEG) 로 읽습니다.
 - ACT·Diffusion 체크포인트면 `--policy.pretrained_backbone_weights=null` 을 붙입니다. 모델을 만들 때 torchvision 이
   ImageNet 가중치를 내려받는데 곧바로 체크포인트 가중치로 덮어써져 쓸모가 없고, 오프라인 기기에서는 여기서 죽습니다.
   BatchNorm/GroupNorm 구조는 `use_group_norm` 이 따로 정하므로 구조는 같습니다.
+- 시작 전 확인: 팔로워 포트·(양팔) 공통 id·팔로워 캘리브레이션 파일이 없으면 작업을 띄우기 전에 거부(lerobot 이 팔을 연 뒤에 묻다 멈추지 않게).
 - 시도 기록: `POST /api/rollout/trial {job, result: success|fail|undo}` → `openmimic_trials.json` 의 체크포인트(outputs 기준 상대경로) 목록에 추가.
   작업 id·엔진·환경을 같이 남깁니다. 끝난 실행도 `/rollout?job=<jid>` 로 다시 열어 기록할 수 있습니다.
 - 화면 갱신은 앞 요청이 끝난 뒤 다음 요청(0.5 s) — 서버가 느려도 요청이 쌓이지 않고, 늦게 온 옛 응답은 버립니다.
@@ -442,8 +467,11 @@ OpenMimic 쪽
   - 모델: `config.json + model.safetensors` 폴더를 찾아 배치, 이름이 겹치면 `_2`. 묶음 안의 OpenVINO 변환본은 가중치 크기가 같을 때만
     지문을 새로 찍어 "다시 변환 필요" 로 보이지 않게 함. 데이터셋: `meta/info.json` 이 있는 최상위 폴더
   - 열린 프로젝트가 있으면 그 프로젝트에 넣음
+  - zip 안 경로의 `\` 는 `/` 로 바꿔 검사하고 직접 풉니다 (Windows PowerShell 5.1 의 `Compress-Archive` 가 `\` 구분자로 씀). 드라이브 문자(`C:`)도 거부
 - **이어서 학습** `POST /api/train/resume {run, steps}` — `lerobot_train --config_path=<run>/checkpoints/last/pretrained_model/train_config.json
   --resume=true --steps=<목표> --output_dir=<run>`. `last/training_state` 가 있어야 합니다(가져온 모델은 없음).
+  설정의 `dataset.repo_id`(`local/<이름>`)로 이 기기의 데이터셋을 찾아, 없거나 다른 작업이 쓰는 중이면 거부하고, 저장된 `dataset.root` 가 지금 경로와 다르면
+  (설치 폴더를 옮김·다른 기기에서 가져옴) `--dataset.root` 를 덧붙입니다. HF Jobs 는 ACT2 플러그인이 파드에 없어 ACT2 학습을 거부합니다.
 - **정책** `TRAIN_POLICIES` 표: ACT(`--policy.type=act`), Diffusion(`--policy.type=diffusion`, `diffusers` 필요),
   SmolVLA(`--policy.path=lerobot/smolvla_base`, `transformers`·`num2words` 필요). 시작 전에 `importlib.util.find_spec` 으로 패키지를
   확인해 lerobot 이 수십 초 뒤 ImportError 로 죽기 전에 설치 명령을 알려 줍니다. ACT2(`--policy.type=act2`)는 이 레포의 플러그인이라
@@ -470,6 +498,11 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   `nobb` 선택지는 `--policy.pretrained_backbone_weights=null`. 캐시(`$TORCH_HOME/hub/checkpoints/resnet18-f37072fd.pth`)가 없으면 경고.
 - **장치 확인**: OpenMimic 본체는 torch 를 import 하지 않으므로 `local_cuda()` 가 하위 프로세스로 `torch.cuda`·`torch.xpu` 를 묻고
   10분 캐시합니다. 학습 탭 점검에 학습 장치(GPU / XPU / CPU)를 표시만 하고 막지는 않습니다.
+- **SmolVLA**: `lerobot/smolvla_base` 의 영상 입력은 `observation.images.camera1~3` 이라, 데이터셋 카메라 이름(top·wrist …)이 다르면
+  lerobot `validate_visual_features_consistency` 가 학습 시작 때 거부합니다. `cam_order` 순(전경 → 손목)으로 `--rename_map` 을 붙이고,
+  4대 이상이면 앞 3대만 쓴다고 경고합니다. 영상 정규화가 IDENTITY 라 통계 키 이름은 상관없고, 매핑은 `train_config.json` 에 남아 롤아웃이 다시 씁니다.
+  HF Jobs 에서는 `--policy.path` 정책이 `submit_to_hf` 가 repo id 를 채우기 전에 `validate()` 에서 `save_checkpoint_to_hub requires --policy.repo_id`
+  로 거부되므로 `cloud-train` 이 `--policy.repo_id=<user>/<이름>` 을 붙입니다(원격 설정의 repo id 는 lerobot 이 `<user>/<job_name>_<시각>` 으로 다시 씀).
 
 ### 롤아웃 카메라 연결 (`rollout_rename_map`)
 
@@ -496,6 +529,8 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 - lerobot 은 Ctrl-C 를 "로그 분리" 로 처리해 원격 학습이 계속 과금됩니다. `kill_job` 이 `cloudtrain` 이면 로그의 `Job submitted: <id>` 를 찾아
   `HfApi.cancel_job` 도 부릅니다. 작업 종류를 `train` 과 나눈 이유: 이 기기 GPU·팔을 안 쓰므로 수집·추론·로컬 학습과 배타가 아님.
   학습 그래프(`/api/trainlog`)는 원격 로그 줄이 같은 형식이라 그대로 그려집니다.
+  데이터셋 사용 중 판정은 업로드하는 동안만입니다 — 작업 로그에 `[hub] HF Jobs 제출` 이 찍힌 뒤에는(`cloud_pushed`, 새로 붙은 로그만 읽음)
+  원격 학습이 몇 시간 돌아도 그 데이터셋의 삭제·복구·이어서 수집을 막지 않습니다.
 - **모델 받기**: repo 파일 목록에서 `checkpoints/<step>/pretrained_model/config.json` 을 찾아 마지막(또는 지정) step 만
   `snapshot_download(allow_patterns=...)`, 없으면 루트의 `config.json + model.safetensors` 를 step `hub` 로. `outputs/<repo이름>/checkpoints/<step>/`
   에 놓고 `openmimic_import.json` 에 출처 기록.
@@ -508,7 +543,9 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
 - **데이터셋 복구** (`tools_dsrepair.py`, LeLab 코드 기반): `finalize()` 전에 끊긴 v3.0 데이터셋은 `meta/episodes/` 가 없어 열리지 않습니다.
   읽을 수 있는 parquet·영상 길이로 색인을 다시 만들고, 꼬리 없는 parquet 는 `.unreadable` 로 치우고, 잃은 에피소드가 있으면 data 를 잘라내고
   stats 를 다시 계산합니다. OpenMimic 쪽 변경: 백업(`DATA_ROOT/.repair_backup/<이름>_<시각>/` — 폴더 밖이라 다운로드·업로드에 안 섞임), 작업(`repair`)으로 실행,
-  목록에서 v3.0 이고 수집 중이 아닌데 `meta/episodes/*.parquet` 가 없으면 **마무리 안 됨** 표시.
+  목록에서 v3.0 이고 수집 중이 아닌데 `meta/episodes/*.parquet` 가 없거나, 색인 행 수가 `info.json` 의 `total_episodes` 와 다르거나, 색인 파일이
+  꼬리(footer) 없이 남았으면 **마무리 안 됨** 표시 — 이어서 수집하다 끊긴 경우입니다(lerobot 은 에피소드마다 `total_episodes` 를 올리지만 색인은
+  10개씩 모아 씀). `tools_dsrepair.needs_repair` 도 같은 개수 비교를 합니다.
 - **롤아웃 사전 점검** `policy_fit()`: 체크포인트 `config.json` 의 `input_features` 로 카메라 이름(없으면 거부)·해상도(다르면 경고)·
   `observation.state` 차원(한팔 6 / 양팔 12, 다르면 거부)을 대조. 가져온 모델처럼 학습 데이터셋 정보가 없어도 됩니다.
   언어 정책(smolvla·pi0·pi05 등)은 태스크 설명 필수.
@@ -534,7 +571,7 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   (바깥을 누르면 닫힘). 고칠 수 있는 문제 표시는 표시 자체를 버튼으로 둡니다(`button.fixbadge`, 예: 마무리 안 됨 · 복구).
 - **작업 탭**: 끝난 작업은 최근 `JOBS_RECENT`(10)개만 펼치고 나머지는 접습니다. `POST /api/deljobs_done` 은 끝난 작업 기록을 지우되
   학습 그래프·모델 이력·실행 기록·OpenVINO 변환 결과가 읽는 `JOBS_KEEP_KINDS`(train · cloudtrain · rollout · ovconvert)는 남깁니다.
-- **상태 칩**: 프로젝트 · 환경 · 한팔/양팔 · 포트 미설정 · 작업 상태. 작업 종류는 `JOB_KIND_LABEL` 의 한국어 이름(대기·학습·수집…)으로 보입니다.
+- **작업 표시**: 상단바의 **● 작업 이름** 과 작업 탭의 작업 종류는 `JOB_KIND_LABEL` 의 한국어 이름(학습·수집…)으로 보입니다.
 - **첫 실행**: `/` 는 포트 미설정 · 데이터셋 없음 · 모델 없음이고 이 브라우저가 마법사를 연 적이 없으면(쿠키 `openmimic_wiz`) 셋업 마법사로 보냅니다.
   그다음부터는 데이터셋 화면 위에 **시작하기**(`getting_started()` — 포트 · 캘리브레이션 파일 · 에피소드 있는 데이터셋 · 체크포인트 · 실행 기록)가
   남은 단계를 보여 줍니다. 다 끝나면 사라지고, 숨기면 쿠키 `openmimic_gs=hide`.
@@ -552,7 +589,7 @@ X-VLA·MolmoAct2·pi0 계열·GR00T 등 CUDA 전용 대형 모델은 Intel PC �
   끌 때 SIGTERM 만 보내므로 `start_job` 이 새 세션으로 띄운 수집·학습 작업은 그대로 돌고, 다시 켜면 작업 목록에 보입니다.
   시작 로그의 접속 주소는 `hostname -I`(없으면 기본 경로의 내 주소)로 찾습니다.
 - **모바일**(820px 이하): 넓은 표는 카드 안에서만 가로로 밀리고(`.card{overflow-x:auto}`), 긴 경고 배지(`p.badge`)는 줄바꿈합니다.
-  상태 칩은 포트 미설정 · 작업 상태 · 한/EN 만 남깁니다. 390px 폭에서 전 화면 가로 넘침 0 을 확인했습니다.
+  상단바 오른쪽은 프로젝트 칩 · ☰ 메뉴(와 뜰 때만 포트 미설정 · ● 작업)뿐입니다. 390px 폭에서 전 화면 가로 넘침 0 을 확인했습니다.
 
 ## 한/영 전환 (i18n)
 
@@ -602,7 +639,7 @@ Intel NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다. 
 - lerobot commit `e40b58a8dfa9e7b86918c374791599d070518d11` 에 맞춰져 있습니다 (`lerobot_conda.sh` 의 `LEROBOT_COMMIT`)
 - `pip install -e "lerobot-src[feetech,dynamixel,training,diffusion,smolvla]"`, 그다음 `torchcodec` 제거 + `av>=15,<16` (pyav 디코딩)
 - 양팔 OMX: `pip install --no-deps -e plugins/lerobot_robot_bi_omx -e plugins/lerobot_teleoperator_bi_omx`
-- Python 3.12, torch 2.9 cu130 (Thor 는 `https://pypi.jetson-ai-lab.io/sbsa/cu130`)
+- Python 3.12, torch 2.11 cu130 (Thor 는 `https://pypi.jetson-ai-lab.io/sbsa/cu130` — 받는 버전은 그 인덱스를 따름)
 - lerobot 이 `torch<2.12, torchvision<0.27` 을 요구합니다. `cuda`·`intel` 플랫폼은 이 범위로 받습니다(`thor` 는 기존 인덱스 그대로).
 - torch 고정용 `PIP_CONSTRAINT` 에서 로컬 버전 꼬리표(`+cu130`, `+cpu`)는 뗍니다 — 붙어 있으면 pip 가
   `Cannot install None … ResolutionImpossible` 로 lerobot 설치를 포기합니다. `torch==2.11.0` 은 설치된 `2.11.0+cu130` 을 그대로 만족합니다.
@@ -611,6 +648,7 @@ Intel NPU·GPU 드라이버는 설치하지 않고 점검·안내만 합니다. 
 ## 테스트
 
 하드웨어 없이 다음으로 검증했습니다 (스크립트는 레포에 넣지 않았습니다):
+아래의 '가상 팔' 은 시험용 에뮬레이터 또는 예전 판의 가상 장치입니다 — 지금 판의 화면에는 가상 장치 기능이 없습니다.
 
 - STS3215 / Dynamixel X(Protocol 2.0) **에뮬레이터**(시험용 — 레포에는 넣지 않음) + 실제 lerobot 버스 — 진단, 캘리브레이션(범위·공장값·가져오기),
   확인 단계, Control 연결 순서·E-STOP·과부하 모터, 포트 감시, 모터 ID 세팅, 양팔 OMX 플러그인

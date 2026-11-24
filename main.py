@@ -30,6 +30,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import concurrent.futures
 import threading
 import time
 import zipfile
@@ -37,7 +38,7 @@ from pathlib import Path
 
 import pandas as pd
 import uvicorn
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
@@ -247,24 +248,47 @@ JOB_DIR.mkdir(parents=True, exist_ok=True)
 OUT_ROOT.mkdir(parents=True, exist_ok=True)
 app = FastAPI(title="OpenMimic")
 
+
+@app.exception_handler(HTTPException)
+async def http_error(request: Request, exc: HTTPException):
+    """화면들은 오류를 {"error": …} 로 읽습니다 (FastAPI 기본은 {"detail": …})."""
+    return JSONResponse({"error": str(exc.detail)}, status_code=exc.status_code, headers=getattr(exc, "headers", None))
+
+
+async def jbody(req: Request) -> dict:
+    """POST 본문(JSON 객체). 깨진 JSON 이나 객체가 아닌 본문은 400 — 화면은 늘 객체를 보내지만,
+    다른 도구가 잘못 보내도 500(서버 오류)으로 보이지 않게 합니다."""
+    try:
+        b = await req.json()
+    except ValueError:
+        raise HTTPException(400, "요청 본문이 올바른 JSON 이 아닙니다") from None
+    if not isinstance(b, dict):
+        raise HTTPException(400, "요청 본문은 JSON 객체여야 합니다")
+    return b
+
+
 # ----------------------------- 인증 (기본 꺼짐) -------------------------------
 # 기본은 인증 없음 — http://<host>:8080 으로 바로 들어갑니다.
 # 켜려면 둘 중 하나:
 #   OPENMIMIC_TOKEN=원하는값 python main.py     (토큰 직접 지정)
 #   OPENMIMIC_AUTH=on        python main.py     (openmimic_token.txt 에 자동 생성)
+# openmimic_token.txt 가 있으면 환경 변수 없이도 켜집니다 — update·restart·자동 시작 서비스로 다시 켰을 때
+# 인증이 조용히 꺼지지 않게. 끄려면 그 파일을 지우고 다시 켭니다.
 def _init_token():
     tok = os.environ.get("OPENMIMIC_TOKEN")
     if tok and tok.strip():
         return tok.strip()
+    try:
+        tok = TOKEN_FILE.read_text(encoding="utf-8").strip() if TOKEN_FILE.is_file() else ""
+    except OSError:
+        tok = ""
+    if tok:
+        return tok
     if os.environ.get("OPENMIMIC_AUTH", "").lower() not in ("on", "1", "true", "yes"):
         return None
-    if TOKEN_FILE.exists():
-        tok = TOKEN_FILE.read_text().strip()
-        if tok:
-            return tok
     tok = secrets.token_hex(16)
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)
-    TOKEN_FILE.write_text(tok + "\n")
+    TOKEN_FILE.write_text(tok + "\n", encoding="utf-8")
     try:
         TOKEN_FILE.chmod(0o600)
     except OSError:
@@ -277,7 +301,8 @@ COOKIE = "openmimic_token"
 
 
 def token_ok(tok):
-    return bool(tok) and secrets.compare_digest(str(tok), AUTH_TOKEN)
+    # compare_digest 는 ASCII 가 아닌 str 에서 TypeError — 한글 입력 상태로 친 토큰도 로그인 화면으로 돌려보내게 바이트로 비교합니다
+    return bool(tok) and secrets.compare_digest(str(tok).encode("utf-8"), AUTH_TOKEN.encode("utf-8"))
 
 
 LOGIN_PAGE = """<!doctype html><meta name=viewport content="width=device-width,initial-scale=1">
@@ -322,8 +347,9 @@ def _same_origin(headers):
     if not origin or origin == "null":
         return True
     from urllib.parse import urlsplit
-    host = (headers.get("host") or "").rsplit(":", 1)[0].strip("[]")
-    return (urlsplit(origin).hostname or "") == host
+    # 포트까지 비교합니다 — 같은 PC 의 다른 서비스(다른 포트) 페이지가 보낸 요청도 다른 출처입니다
+    host = (headers.get("host") or "").strip().lower()
+    return urlsplit(origin).netloc.lower() == host
 
 
 # 팔(시리얼)·GPU 를 잡는 '시작' 요청들은 한 번에 하나씩 처리합니다.
@@ -335,8 +361,11 @@ _START_PATHS = {"/api/record", "/api/rollout", "/api/train", "/api/setup/probe",
                 "/api/setup/config", "/api/calib/start", "/api/calib/factory", "/api/wizard/robot",
                 "/api/envs/activate", "/api/envs/save_as", "/api/ov/convert",
                 "/api/envs/rename", "/api/envs/delete", "/api/hub/push", "/api/hub/pull",
-                "/api/projects/save", "/api/projects/activate", "/api/projects/delete"}
-_START_PREFIXES = ("/api/install/", "/api/dataset/repair/")
+                "/api/projects/save", "/api/projects/activate", "/api/projects/delete",
+                # 데이터셋·모델을 바꾸는 요청 — 확인(사용 중인가)과 실행 사이에 다른 시작 요청이 끼지 않게
+                "/api/train/resume", "/api/delete_checkpoint"}
+_START_PREFIXES = ("/api/install/", "/api/dataset/repair/", "/api/delete/", "/api/delete_dataset/",
+                   "/api/rename_dataset/")
 _START_GATE = asyncio.Lock()
 
 
@@ -459,7 +488,7 @@ NAV_EN = {"셋업": "Setup", "캘리브레이션": "Calibration", "제어": "Con
           "OpenVINO 변환": "OpenVINO convert", "복구": "Repair", "삭제": "Delete",
           # 표 머리·입력칸 이름표·작은 제목 — 한 낱말짜리라 자리를 정해 바꿉니다
           "로봇": "Robot", "크기": "Size", "상태": "Status", "시작": "Started", "종류": "Kind", "폭": "Span",
-          "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording", "캘리브레이션": "Calibration",
+          "정책": "Policy", "배치": "Batch", "step 수": "Steps", "녹화": "Recording",
           # 큰 탭·하위 탭
           "데이터": "Data", "포트·카메라": "Ports & cameras", "새 학습": "New training", "셋업 마법사": "Setup wizard",
           "끝남": "Done", "실행 중": "Running", "전체화면": "Fullscreen"}
@@ -514,8 +543,11 @@ async def i18n_middleware(request: Request, call_next):
     conv = to_en_json if ct.startswith("application/json") else to_en_html
     # 큰 화면은 스레드에서 — 번역하는 동안 이벤트 루프(제어 탭 E-STOP·카메라 스트림)가 멈추지 않게
     out = (conv(text) if len(text) < 4096 else await asyncio.to_thread(conv, text)).encode("utf-8")
-    headers = {k: v for k, v in resp.headers.items() if k.lower() != "content-length"}
-    return Response(out, status_code=resp.status_code, headers=headers)
+    r = Response(out, status_code=resp.status_code)
+    # dict 로 옮기면 Set-Cookie 가 여러 개일 때 하나만 남습니다 — 원래 헤더를 그대로(길이만 새로) 옮깁니다
+    r.raw_headers = [(k, v) for k, v in resp.raw_headers if k.lower() != b"content-length"] + \
+        [(b"content-length", str(len(out)).encode())]
+    return r
 
 
 @app.get("/lang")
@@ -940,6 +972,8 @@ def list_datasets(sizes=False):
     out = []
     if DATA_ROOT.exists():
         for d in sorted(DATA_ROOT.iterdir()):
+            if d.name.startswith("."):      # .hub_<이름> = 허브에서 받는 중 (다 받으면 이름이 바뀜) — 미완성이라 숨김
+                continue
             if (d / "meta/info.json").exists():
                 info = load_json(d / "meta/info.json", {})
                 nbytes, nfiles = dir_size(d) if sizes else (0, 0)
@@ -954,7 +988,7 @@ def list_datasets(sizes=False):
 
 
 def dataset_unfinalized(ds):
-    """녹화가 끊겨 meta/episodes 색인이 없는 데이터셋 (수집 중인 것은 제외 — 그건 끝날 때 씀)"""
+    """녹화가 끊겨 meta/episodes 색인이 없거나 info.json 과 개수가 안 맞는 데이터셋 (수집 중인 것은 제외 — 그건 끝날 때 씀)"""
     root = DATA_ROOT / ds
     if not (root / "meta/info.json").is_file() or dataset_busy(ds):
         return False
@@ -962,7 +996,19 @@ def dataset_unfinalized(ds):
     if load_json(root / "meta/info.json", {}).get("codebase_version") != "v3.0":
         return False
     ep = root / "meta" / "episodes"
-    return not (ep.is_dir() and any(ep.rglob("*.parquet")))
+    files = sorted(ep.rglob("*.parquet")) if ep.is_dir() else []
+    if not files:
+        return True
+    # 이어서 수집하다 끊긴 경우: lerobot 은 에피소드마다 info.json 의 total_episodes 를 올리지만 색인은 10개씩 모아 쓰므로,
+    # 색인은 읽히는데 개수가 모자라거나(아직 안 쓴 것) 마지막 색인 파일이 꼬리 없이 남습니다(쓰던 중) — 둘 다 복구 대상
+    try:
+        import pyarrow.parquet as pq
+        rows = sum(pq.read_metadata(f).num_rows for f in files)
+    except ImportError:
+        return False
+    except Exception:      # noqa: BLE001 — 꼬리(footer) 없는 parquet
+        return True
+    return rows != load_json(root / "meta/info.json", {}).get("total_episodes", rows)
 
 
 REPAIR_PY = Path(__file__).resolve().parent / "tools_dsrepair.py"
@@ -1375,11 +1421,38 @@ def job_uses_dataset(j, ds):
             return True
         if k in ("--dataset.root", "--root", "--new_root") and v and os.path.realpath(v) == root:
             return True
+        # 에피소드 삭제(제자리 편집)는 원본을 <이름>_old 로 옮겨 놓고 거기서 읽습니다 — 그 폴더도 쓰는 중
+        if j.get("kind") == "delete" and k == "--root" and v and os.path.realpath(v + "_old") == root:
+            return True
     return False
 
 
+_CLOUD_PUSHED = {}          # 작업 id → (로그에서 읽은 위치, 제출 줄을 찾았는지)
+CLOUD_SUBMIT_MARK = b"[hub] HF Jobs \xec\xa0\x9c\xec\xb6\x9c"      # openmimic_hub.cloud_train 의 '[hub] HF Jobs 제출' (UTF-8)
+
+
+def cloud_pushed(j):
+    """클라우드 학습이 데이터셋 업로드를 끝내고 원격 작업을 제출했는지 — 그다음부터는 로컬 데이터셋을 읽지 않습니다.
+    로그는 원격 학습 내내 길어지므로 지난번에 읽은 곳부터 새로 붙은 부분만 봅니다."""
+    pos, found = _CLOUD_PUSHED.get(j["id"], (0, False))
+    if found:
+        return True
+    start = max(0, pos - len(CLOUD_SUBMIT_MARK))          # 표시가 두 번 읽기 사이에 걸쳐도 찾게 조금 겹쳐 읽음
+    try:
+        with open(JOB_DIR / f"{j['id']}.log", "rb") as f:
+            f.seek(start)
+            chunk = f.read()
+    except OSError:
+        return False
+    found = CLOUD_SUBMIT_MARK in chunk
+    _CLOUD_PUSHED[j["id"]] = (start + len(chunk), found)
+    return found
+
+
 def dataset_busy(ds):
-    return next((j for j in jobs_index() if j["alive"] and job_uses_dataset(j, ds)), None)
+    # 클라우드 학습은 업로드하는 동안만 데이터셋을 씁니다 — 원격 학습(몇 시간) 내내 삭제·복구·이어 수집을 막지 않게
+    return next((j for j in jobs_index() if j["alive"] and job_uses_dataset(j, ds)
+                 and not (j.get("kind") == "cloudtrain" and cloud_pushed(j))), None)
 
 
 def child_env():
@@ -1414,11 +1487,14 @@ def start_job(kind, argv, cwd=None, spec=None):
     spec 은 worker 가 읽을 작업 명세(dict) — job json 에 같이 저장됩니다."""
     if shutil.which(argv[0]) is None:
         raise JobStartError(f"실행 파일을 찾을 수 없습니다: {argv[0]} — openmimic conda env 안에서 OpenMimic 을 띄웠는지 확인")
-    jid = f"{kind}_{time.strftime('%m%d_%H%M%S')}"
-    n = 2
-    while (JOB_DIR / f"{jid}.json").exists():     # 같은 초에 두 개 → 로그·pid 덮어쓰기 방지
-        jid = f"{kind}_{time.strftime('%m%d_%H%M%S')}_{n}"
-        n += 1
+    base = f"{kind}_{time.strftime('%m%d_%H%M%S')}"
+    jid, n = base, 2
+    while True:      # 같은 초에 두 개 → 로그·pid 덮어쓰기 방지. 있는지 보고 쓰면 동시 요청이 같은 id 를 받으므로 배타적으로 만듭니다
+        try:
+            os.close(os.open(JOB_DIR / f"{jid}.json", os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+            break
+        except FileExistsError:
+            jid, n = f"{base}_{n}", n + 1
     log = JOB_DIR / f"{jid}.log"
     # worker 가 자기 job json 을 읽으므로 프로세스보다 먼저 써야 합니다
     argv = [str(a).replace("{jid}", jid) for a in argv]
@@ -1428,8 +1504,17 @@ def start_job(kind, argv, cwd=None, spec=None):
     lf = open(log, "w")
     try:
         p = P.spawn_job(argv, env=child_env(), stdout=lf, cwd=cwd or str(HOME))
+    except OSError as e:      # 못 띄웠으면 'pid 없는 끝난 작업' 기록이 남지 않게 지웁니다
+        lf.close()
+        for suffix in (".json", ".log"):
+            try:
+                P.unlink(JOB_DIR / f"{jid}{suffix}")
+            except OSError:
+                pass
+        raise JobStartError(f"작업을 시작하지 못했습니다: {e}") from e
     finally:
-        lf.close()      # 자식이 dup 를 들고 있으므로 부모 쪽은 닫습니다 (fd 누수 방지)
+        if not lf.closed:
+            lf.close()      # 자식이 dup 를 들고 있으므로 부모 쪽은 닫습니다 (fd 누수 방지)
     j = load_json(JOB_DIR / f"{jid}.json", {})
     j["pid"] = p.pid
     j["pid_start"] = _proc_start(p.pid)
@@ -1445,8 +1530,12 @@ def send_cmd(jid, key):
     rd = run_dir(jid)
     try:
         rd.mkdir(parents=True, exist_ok=True)
-        with open(rd / "cmd", "a") as f:
-            f.write(key)
+        # 키마다 새 파일(cmd.<시각>.k)을 완성한 뒤 이름만 바꿔 내놓습니다. 한 파일에 이어 쓰면 worker 가 가져가는(이름 바꾸고 읽고 지움)
+        # 순간과 겹칠 때 지워진 파일에 써서 키가 사라질 수 있습니다 ('저장하고 다음' 이 안 먹음).
+        name = f"cmd.{time.time_ns():020d}.{os.getpid()}"
+        tmp = rd / (name + ".tmp")
+        tmp.write_text(key)
+        os.replace(tmp, rd / (name + ".k"))
         return True
     except OSError:
         return False
@@ -1610,19 +1699,31 @@ def close_arm(dev, disable_torque=True):
             pass
 
 
-def connect_follower(dev):
+def _snapshot_calib(bus, out):
+    """out(dict)가 주어지면 지금 보드(EEPROM)의 캘리브레이션을 담습니다. 못 읽으면 비워 둡니다."""
+    if out is None:
+        return
+    try:
+        out.update(bus.read_calibration())
+    except Exception:      # noqa: BLE001
+        out.clear()
+
+
+def connect_follower(dev, board_calib=None):
     """SOFollower.connect(calibrate=False) 와 같은 일을 하되 순서를 안전하게 바꿉니다.
 
     lerobot 원본은 configure() 를 'with bus.torque_disabled()' 안에서 돌리고, 빠져나올 때
     토크를 다시 켭니다 (+ Lock=1). 그러면 ① RAM 에 남은 이전 Goal_Position 으로 팔이 튀고
     ② 그 뒤에 쓰는 캘리브레이션(Homing_Offset)이 토크가 켜진 채로 들어가 기준점이 움직입니다.
     여기서는 토크를 끈 상태에서 캘리브레이션을 먼저 쓰고, Goal_Position=현재 위치로 맞춘 뒤 configure 합니다.
-    끝나면 lerobot 과 똑같이 토크가 켜진 상태입니다. 실패하면 포트·카메라를 닫고 예외를 다시 던집니다."""
+    끝나면 lerobot 과 똑같이 토크가 켜진 상태입니다. 실패하면 포트·카메라를 닫고 예외를 다시 던집니다.
+    board_calib(dict)를 주면 파일 값을 쓰기 전의 보드 캘리브레이션을 담아 돌려줍니다 (캘리브레이션 취소 때 되돌릴 값)."""
     bus = dev.bus
     try:
         # lerobot bus.connect 는 핸드셰이크(모터 확인) 실패 때 포트를 연 채로 예외를 냅니다 — 여기서 같이 닫습니다
         bus.connect()
         torque_off_all(bus)
+        _snapshot_calib(bus, board_calib)
         if dev.calibration and not bus.is_calibrated:
             with retrying_writes(bus):
                 bus.write_calibration(dev.calibration)
@@ -1636,16 +1737,23 @@ def connect_follower(dev):
         raise
 
 
-def connect_leader(dev):
-    """리더 connect(calibrate=False) + 캘리브레이션 파일을 보드에 씀.
-    SO 리더는 configure 가 토크를 끕니다. OMX 리더는 그리퍼만 토크를 켭니다(손가락 트리거)."""
+def connect_leader(dev, board_calib=None):
+    """리더 connect(calibrate=False) 와 같은 일을 connect_follower 처럼 '토크 끈 채 캘리브레이션 먼저' 순서로 합니다.
+    OMX 리더의 configure() 는 끝에서 그리퍼 토크를 켜는데(손가락 트리거), Homing_Offset·Position_Limit 은 EEPROM 이라
+    Dynamixel 은 토크가 켜져 있으면 쓰기를 거부합니다 — 그래서 configure 보다 먼저 씁니다. SO 리더는 configure 가 토크를 끕니다."""
+    bus = dev.bus
+    dxl = openmimic_health.bus_kind(bus) == "dynamixel"
     try:
-        dev.connect(calibrate=False)
-        if dev.calibration and not dev.bus.is_calibrated:
-            with retrying_writes(dev.bus):
-                dev.bus.write_calibration(dev.calibration)
+        bus.connect()
+        torque_off_all(bus)
+        _snapshot_calib(bus, board_calib)
+        if dev.calibration and not bus.is_calibrated:
+            with retrying_writes(bus):
+                bus.write_calibration(dev.calibration)
+        dev.configure()
     except Exception:
-        close_arm(dev, disable_torque=False)
+        # SO 리더는 원래 토크가 없어 해제 재시도(전원 없으면 수 초)를 건너뛰고, OMX 리더는 그리퍼 토크를 끕니다
+        close_arm(dev, disable_torque=dxl)
         raise
 
 
@@ -1863,8 +1971,11 @@ class ArmCtl:
         obs = self.robot.get_observation()
         return {k[:-4]: float(v) for k, v in obs.items() if k.endswith(".pos")}
 
-    def set_torque(self, on: bool):
+    def set_torque(self, on: bool, allow=None):
+        """allow: 켤 때 잠금 안에서 확인하는 함수 — False 면 켜지 않습니다 (그사이 E-STOP 이 눌린 경우)."""
         with self.lock:
+            if on and allow is not None and not allow():
+                return
             if on:
                 # 서보의 Goal_Position 은 이전 세션 값이 RAM 에 그대로 남아 있습니다.
                 # 그 상태로 토크만 켜면 서보가 그 목표로 전속 이동합니다.
@@ -1885,6 +1996,7 @@ class ArmCtl:
                     raise RuntimeError(f"토크 켜기 실패 — 전부 다시 껐습니다: {e}") from e
                 self._last_goal = {}
             else:
+                self.follow = False           # 토크 없이 팔로우만 남지 않게
                 failed = torque_off_all(self.robot.bus)
                 self.torque = False
                 if failed:
@@ -2299,39 +2411,57 @@ class MotorSetupSession:
         self.port = port
         self.stage = "running"
 
-    def write_current(self):
+    def write_current(self, expect=None):
+        """expect: 화면이 쓰려는 모터 이름 — 다른 이름이면(앞 요청이 이미 썼음) 쓰지 않습니다."""
         if not self.active:
             raise RuntimeError("진행 중이 아닙니다")
-        name = self.current
-        bus = self.bus
-        target = bus.motors[name].id
-        with self.lock:
-            baud, cur_id = bus._find_single_motor(name)     # 보드레이트 전부 훑어 모터 1개 탐색
-            bus.set_baudrate(baud)
-            ids = bus.broadcast_ping() or {}
-            if len(ids) > 1:
-                raise RuntimeError(f"모터가 {len(ids)}개 응답합니다 (ID {sorted(ids)}) — "
-                                   f"'{name}' 모터 하나만 보드에 연결하세요")
-            bus.setup_motor(name, initial_baudrate=baud, initial_id=cur_id)
-            bus.set_baudrate(bus.default_baudrate)
-            after = bus.broadcast_ping() or {}
+        # 쓰는 중에 또 누르면(보드레이트 탐색이 몇 초 걸림) 같은 모터를 다시 쓰고 순서가 하나 밀려
+        # 다음 모터가 ID 1 로 남습니다 — 진행 중이면 기다리지 않고 거절합니다
+        if not self.lock.acquire(blocking=False):
+            raise RuntimeError("ID 쓰는 중입니다 — 끝날 때까지 기다리세요")
+        try:
+            if not self.active:
+                raise RuntimeError("진행 중이 아닙니다")
+            name = self.current
+            if expect and expect != name:
+                raise RuntimeError(f"'{expect}' 는 이미 썼습니다 — 지금 차례: '{name}'")
+            bus = self.bus
+            target = bus.motors[name].id
+            self._write_locked(bus, name, target)
+        finally:
+            self.lock.release()
+
+    def _write_locked(self, bus, name, target):
+        baud, cur_id = bus._find_single_motor(name)     # 보드레이트 전부 훑어 모터 1개 탐색
+        bus.set_baudrate(baud)
+        ids = bus.broadcast_ping() or {}
+        if len(ids) > 1:
+            raise RuntimeError(f"모터가 {len(ids)}개 응답합니다 (ID {sorted(ids)}) — "
+                               f"'{name}' 모터 하나만 보드에 연결하세요")
+        bus.setup_motor(name, initial_baudrate=baud, initial_id=cur_id)
+        bus.set_baudrate(bus.default_baudrate)
+        after = bus.broadcast_ping() or {}
         if target not in after:
             raise RuntimeError(f"ID {target} 기록 후 응답이 없습니다 — 전원/배선 확인 후 다시 시도")
         self.done.append({"name": name, "id": target, "from_id": int(cur_id), "baud": int(baud)})
         self.last = f"{name}: ID {cur_id} → {target} (baud {baud} → {bus.default_baudrate})"
         self.idx += 1
         if self.idx >= len(self.ORDER):
-            self._close()               # 포트를 먼저 닫고 '끝' 으로 — 끝으로 보이는 순간 다른 쪽이 같은 포트를 열 수 있음 (Windows)
+            self._close(locked=True)    # 포트를 먼저 닫고 '끝' 으로 — 끝으로 보이는 순간 다른 쪽이 같은 포트를 열 수 있음 (Windows)
             self.stage = "done"
 
-    def _close(self):
+    def _close(self, locked=False):
         bus, self.bus = self.bus, None
         if bus is not None:
-            with self.lock:
-                try:
-                    bus.disconnect(disable_torque=False)
-                except Exception:
-                    pass
+            if not locked:
+                self.lock.acquire()
+            try:
+                bus.disconnect(disable_torque=False)
+            except Exception:
+                pass
+            finally:
+                if not locked:
+                    self.lock.release()
 
     def cancel(self):
         self._close()
@@ -2635,8 +2765,8 @@ def robot_busy(control=True):
 
 
 def gpu_or_loop_busy():
-    """학습 시작을 막아야 하는 작업 (Control 수동 제어는 학습과 동시 가능)"""
-    return busy_with(("record", "rollout", "train"))
+    """학습 시작을 막아야 하는 작업 (Control 수동 제어는 학습과 동시 가능). 패키지 설치 중이면 반쯤 깔린 모듈을 읽으므로 같이 막습니다"""
+    return busy_with(("record", "rollout", "train", "install"))
 
 
 def busy_warn_html(busy, what, scope="all"):
@@ -2663,7 +2793,7 @@ def api_busy(scope: str = "all"):
 
 def exclusive_busy():
     """수집·추론 시작을 막는 작업 — 팔을 쓰는 작업 + 학습 (학습이 CPU·GPU 를 잡아 수집 주기가 밀림)"""
-    return robot_busy() or busy_with(("train",))
+    return robot_busy() or busy_with(("train", "install"))
 
 
 # ----------------------------- 화면 공통 ------------------------------------
@@ -3061,7 +3191,7 @@ def api_projects():
 
 @app.post("/api/projects/save")
 async def api_project_save(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     name = (b.get("name") or "").strip()
     old = (b.get("old") or "").strip()
     if not safe_name(name):
@@ -3112,7 +3242,7 @@ async def api_project_save(req: Request):
 
 @app.post("/api/projects/activate")
 async def api_project_activate(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     name = (b.get("name") or "").strip()
     d = load_projects()
     if name and name not in d["projects"]:
@@ -3137,7 +3267,7 @@ async def api_project_activate(req: Request):
 
 @app.post("/api/projects/delete")
 async def api_project_delete(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     d = load_projects()
     name = (b.get("name") or "").strip()
     if name not in d["projects"]:
@@ -3166,7 +3296,7 @@ async def api_project_delete(req: Request):
 
 @app.post("/api/projects/assign")
 async def api_project_assign(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     kind = b.get("kind")
     item = (b.get("item") or "").strip()
     if kind not in ("datasets", "models") or not safe_name(item):
@@ -3438,7 +3568,7 @@ def api_download_dataset(ds: str):
         return JSONResponse({"error": "meta/info.json 이 없습니다 — 데이터셋 폴더가 아님"}, status_code=400)
     # 수집 중인 데이터셋은 tar 를 뜨는 동안 파일이 계속 자라 무결성이 깨집니다.
     rec = dataset_busy(ds)
-    if rec and rec.get("kind") in ("record", "delete"):
+    if rec and rec.get("kind") in ("record", "delete", "repair"):
         return JSONResponse({"error": f"{rec['id']} 가 이 데이터셋을 쓰는 중 — 끝난 뒤 받으세요"},
                             status_code=409)
     ver = str(info.get("codebase_version", "unknown")).replace("/", "_")
@@ -3533,7 +3663,7 @@ def api_ep_data(ds: str, ep: int):
 
 @app.post("/api/rename_dataset/{ds}")
 async def api_rename_dataset(ds: str, req: Request):
-    b = await req.json()
+    b = await jbody(req)
     new = (b.get("new") or "").strip()
     if not safe_name(ds) or not safe_name(new):
         return JSONResponse({"error": "데이터셋 이름은 영문/숫자/._- 만"}, status_code=400)
@@ -3617,7 +3747,9 @@ def api_delete(ds: str):
     # ~/.cache 쪽에 결과가 생기고 원본은 그대로 남습니다. 제자리 편집이면 lerobot 이 원본을
     # <ds>_old 로 옮겨 백업합니다 (이미 있으면 lerobot 이 지우고 새로 만듦).
     old = DATA_ROOT / f"{ds}_old"
-    if old.exists() and f"{ds}_old" in load_dsmeta():
+    # lerobot 은 <이름>_old 가 있으면 말없이 지우고 새 백업을 만듭니다. OpenMimic 이 만든 이 데이터셋의 백업이면 괜찮지만,
+    # 가져오기·허브로 받은 같은 이름의 다른 데이터셋이면 사라지므로, 백업 표시가 없으면 막습니다.
+    if old.exists() and load_dsmeta().get(f"{ds}_old", {}).get("backup_of") != ds:
         return JSONResponse({"error": f"{ds}_old 라는 데이터셋이 따로 있습니다 — lerobot 이 백업하면서 지워버리므로 "
                                       f"먼저 이름을 바꾸세요"}, status_code=400)
     argv = ["lerobot-edit-dataset",
@@ -3630,6 +3762,10 @@ def api_delete(ds: str):
         jid = start_job("delete", argv)
     except JobStartError as e:
         return JSONResponse({"error": str(e)}, status_code=400)
+    meta = load_dsmeta()          # 이 데이터셋의 백업이라는 표시 — 다음 삭제 때 lerobot 이 덮어써도 되는 폴더인지 가립니다
+    meta[f"{ds}_old"] = {"backup_of": ds, "env": meta.get(ds, {}).get("env", ""), "created": time.strftime("%Y-%m-%d %H:%M")}
+    save_dsmeta(meta)
+    # 표시는 바로 지웁니다 — 삭제가 끝나면 에피소드 번호가 당겨져 남은 표시가 엉뚱한 에피소드를 가리킵니다
     m = load_marks()
     m[ds] = []
     save_marks(m)
@@ -3798,7 +3934,7 @@ async def api_record(req: Request):
     busy = exclusive_busy()   # control 포함 — 제어 탭이 팔을 잡고 있으면 차단
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
-    b = await req.json()
+    b = await jbody(req)
     task = (b.get("task") or CFG["default_task"]).strip()
     neps = _clamp_int(b.get("num_episodes"), 50, 1, 100000)
     ept = _clamp_int(b.get("episode_time_s"), 30, 1, 3600)
@@ -4010,11 +4146,11 @@ def policy_fit(rel):
 FAILURE_HINTS = [
     (r"Overload|overload", "모터 과부하 — 팔이 막혔거나 너무 무거운 걸 들었습니다. 전원을 껐다 켜고 제어에서 토크를 끈 뒤 확인하세요."),
     (r"motor check failed|Missing motor|missing motors|There is no status packet",
-     "모터가 응답하지 않습니다 — 케이블·전원·모터 ID 를 확인하세요 (Setup → 팔 점검)."),
+     "모터가 응답하지 않습니다 — 케이블·전원·모터 ID 를 확인하세요 (로봇 › 포트·카메라 → 팔 불량 점검)."),
     (P.TEXT["perm_regex"], P.TEXT["perm_hint"]),
     (r"could not open port|No such file or directory: '/dev|Failed to open port|SerialException",
-     "시리얼 포트를 열지 못했습니다 — 포트 경로(Setup), USB 연결, 다른 프로그램(제어 탭 등)이 잡고 있는지 확인하세요."),
-    (r"failed to set (capture_(width|height)|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — Setup 카메라 설정을 바꾸세요."),
+     "시리얼 포트를 열지 못했습니다 — 포트 경로(로봇 › 포트·카메라), USB 연결, 다른 프로그램(제어 탭 등)이 잡고 있는지 확인하세요."),
+    (r"failed to set (capture_(width|height)|fps)", "카메라가 그 해상도/fps 를 지원하지 않습니다 — 로봇 › 포트·카메라에서 카메라 설정을 바꾸세요."),
     (r"failed to set fourcc", "카메라가 그 형식(MJPG 등)을 지원하지 않습니다 — 로봇 › 포트·카메라에서 그 카메라의 형식을 '자동' 으로 바꾸세요."),
     (r"OpenCVCamera.*(read failed|Timed out|timeout|not connected)|frames? too old|Failed to capture",
      "카메라 프레임을 못 받았습니다 — 카메라 연결, USB 대역폭(허브에 여러 대), 다른 프로그램 점유를 확인하세요."),
@@ -4074,7 +4210,7 @@ def api_ov_status(ckpt: str = "", refresh: int = 0):
 
 @app.post("/api/ov/convert")
 async def api_ov_convert(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     rel = b.get("ckpt", "")
     ck = ov_ckpt_ok(rel)
     if ck is None:
@@ -4082,7 +4218,7 @@ async def api_ov_convert(req: Request):
     ptype = load_json(ck / "config.json", {}).get("type")
     if ptype not in ("act", "act2"):
         return JSONResponse({"error": f"OpenVINO 변환은 ACT·ACT2 만 지원합니다 (이 체크포인트: {ptype})"}, status_code=400)
-    d = ov_devices(refresh=True)
+    d = await asyncio.to_thread(ov_devices, True)      # 장치 목록은 별도 파이썬을 띄워 수 초 — 이벤트 루프(제어 탭 E-STOP)를 막지 않게
     if not d.get("ok"):
         return JSONResponse({"error": f"OpenVINO 를 쓸 수 없습니다 ({d.get('error')}) — Intel 기기에서 "
                                       f"{P.TEXT['ov_install']}pip install openvino nncf"}, status_code=400)
@@ -4249,6 +4385,16 @@ def policy_train_args(pol, ds_root, opts=None):
                 warns.append("DINOv2 가중치(facebook/dinov2-small, 약 90MB)를 처음 한 번 HuggingFace 에서 받습니다 — 인터넷 필요")
         if "flow" in opts:
             args += ["--policy.action_head=flow", "--policy.use_vae=false", "--policy.flow_steps=5"]
+    if pol == "smolvla":
+        # lerobot/smolvla_base 의 영상 입력은 observation.images.camera1~3 입니다. 이름이 다르면
+        # lerobot 의 validate_visual_features_consistency 가 학습 시작 때 거부하므로 전경 → 손목 순으로 연결합니다.
+        # 매핑은 train_config.json 에 남아 롤아웃(rollout_rename_map)이 그대로 다시 씁니다.
+        slots = [f"observation.images.camera{i}" for i in (1, 2, 3)]
+        if not all(c in slots for c in cams):
+            if len(cams) > len(slots):
+                warns.append(f"SmolVLA 는 카메라 {len(slots)}대까지 씁니다 — "
+                             + ", ".join(c.rsplit(".", 1)[-1] for c in cams[len(slots):]) + " 는 학습에 안 씁니다")
+            args.append("--rename_map=" + json.dumps(dict(zip(cams, slots))))
     if "nobb" in opts and "nobb" in spec.get("opts", ()):
         args.append("--policy.pretrained_backbone_weights=null")
     elif "nobb" in spec.get("opts", ()) and not resnet_cached() and not (pol == "act2" and "dino" in opts):
@@ -4457,9 +4603,12 @@ def api_train_check(dataset: str = "", policy: str = "act", opts: str = "", targ
 
 @app.post("/api/train")
 async def api_train(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     target = b.get("target") or "local"
     if target != "local":
+        if (b.get("policy") or "act") == "act2":       # HF Jobs 이미지(lerobot-gpu)에는 ACT2 플러그인이 없어 원격에서 설정을 못 읽습니다
+            return JSONResponse({"error": "ACT2 는 이 기기에서만 학습할 수 있습니다 — HF Jobs 는 ACT·Diffusion·SmolVLA 를 쓰세요"},
+                                status_code=400)
         return await asyncio.get_running_loop().run_in_executor(None, _cloud_train, b, target)
     busy = gpu_or_loop_busy()   # Control 수동 제어는 학습과 동시 가능
     if busy:
@@ -4920,16 +5069,29 @@ def _safe_extract(arc, out):
             t.extractall(out, filter="data")
     elif zipfile.is_zipfile(arc):
         with zipfile.ZipFile(arc) as z:
+            todo = []
             for i in z.infolist():
-                n = i.filename
-                if n.startswith("/") or "\\" in n or ".." in Path(n).parts:
-                    raise ValueError(f"위험한 경로: {n}")
+                # Windows PowerShell 5.1 의 Compress-Archive 는 경로 구분자를 '\' 로 씁니다 — '/' 로 바꾼 뒤 검사하고,
+                # extractall 대신 직접 풀어 Linux 에서도 'meta\info.json' 같은 이름의 파일 하나가 되지 않게 합니다
+                n = i.filename.replace("\\", "/")
+                parts = [x for x in n.split("/") if x not in ("", ".")]
+                if n.startswith("/") or ".." in parts or (parts and ":" in parts[0]):
+                    raise ValueError(f"위험한 경로: {i.filename}")
                 if (i.external_attr >> 16) & 0o170000 == 0o120000:
-                    raise ValueError(f"링크는 받지 않습니다: {n}")
+                    raise ValueError(f"링크는 받지 않습니다: {i.filename}")
                 total += i.file_size
+                if parts:
+                    todo.append((i, parts, n.endswith("/")))
             if total > free * 0.9:
                 raise ValueError("풀린 크기가 디스크 여유 공간보다 큽니다")
-            z.extractall(out)
+            for i, parts, is_dir in todo:
+                dst = Path(out).joinpath(*parts)
+                if is_dir:
+                    dst.mkdir(parents=True, exist_ok=True)
+                    continue
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                with z.open(i) as src, open(dst, "wb") as f:
+                    shutil.copyfileobj(src, f, 1 << 20)
     else:
         raise ValueError("tar 또는 zip 파일이 아닙니다")
 
@@ -5047,7 +5209,7 @@ async def api_import(what: str, req: Request, filename: str = ""):
 
 @app.post("/api/train/resume")
 async def api_train_resume(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     run = b.get("run", "")
     if not safe_name(run) or not (OUT_ROOT / run / "checkpoints").is_dir():
         return JSONResponse({"error": "모델 없음"}, status_code=400)
@@ -5065,6 +5227,20 @@ async def api_train_resume(req: Request):
         return JSONResponse({"error": f"목표 step 은 지금({done})보다 커야 합니다"}, status_code=400)
     argv = [sys.executable, *P.LEROBOT_TRAIN, f"--config_path={tc}", "--resume=true",
             f"--steps={steps}", f"--output_dir={OUT_ROOT / run}"]
+    # 학습에 쓴 데이터셋 — train_config 에 적힌 경로는 학습한 기기 기준이라, 이 기기의 데이터셋 폴더로 바로잡고 쓰는 중이면 막습니다
+    dcfg = load_json(tc, {}).get("dataset") or {}
+    repo = str(dcfg.get("repo_id") or "")
+    if repo.startswith("local/"):
+        ds = repo.split("/", 1)[1]
+        root = DATA_ROOT / ds
+        if not safe_name(ds) or not (root / "meta/info.json").is_file():
+            return JSONResponse({"error": f"학습에 쓴 데이터셋({ds})이 이 기기에 없습니다 — 데이터셋을 가져온 뒤 이어서 학습하세요"},
+                                status_code=400)
+        busy = dataset_busy(ds)
+        if busy:
+            return JSONResponse({"error": f"{busy['id']} 가 이 데이터셋을 쓰는 중"}, status_code=400)
+        if str(dcfg.get("root") or "") != str(root):
+            argv.append(f"--dataset.root={root}")
     try:
         jid = start_job("train", argv)
     except JobStartError as e:
@@ -5132,7 +5308,7 @@ def api_hub_flavors():
 
 @app.post("/api/hub/login")
 async def api_hub_login(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     try:
         return await asyncio.get_running_loop().run_in_executor(None, _hub().login, b.get("token", ""))
     except Exception as e:     # noqa: BLE001
@@ -5161,14 +5337,14 @@ _HUB_REPO_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]
 
 @app.post("/api/hub/push")
 async def api_hub_push(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     ds = b.get("dataset", "")
     if not safe_name(ds) or not (DATA_ROOT / ds / "meta/info.json").is_file():
         return JSONResponse({"error": "데이터셋 없음"}, status_code=400)
     busy = dataset_busy(ds)
     if busy:
         return JSONResponse({"error": f"{busy['id']} 가 이 데이터셋을 쓰는 중"}, status_code=400)
-    st = _hub().status(refresh=True)
+    st = await asyncio.to_thread(_hub().status, True)       # 네트워크(whoami) — 이벤트 루프를 막지 않게
     if not st.get("ok"):
         return JSONResponse({"error": "Hugging Face 로그인이 필요합니다"}, status_code=400)
     owner = b.get("owner") or st["user"]
@@ -5185,7 +5361,7 @@ async def api_hub_push(req: Request):
 
 @app.post("/api/hub/pull")
 async def api_hub_pull(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     what, repo = b.get("kind"), (b.get("repo") or "").strip().removeprefix("https://huggingface.co/")
     repo = repo.removeprefix("datasets/").strip("/")
     if what not in ("dataset", "model") or not _HUB_REPO_RE.fullmatch(repo):
@@ -5272,7 +5448,7 @@ def hub_page():
         <button onclick="pull('model')">모델로 받기</button>
       </div>
       <p class=muted style="margin:6px 0 0">커뮤니티 데이터셋으로 학습하거나, 다른 곳(HF Jobs 등)에서 학습한 정책을 이 기기 팔로 돌릴 때 씁니다.
-      받은 데이터셋은 Datasets, 모델은 모델 탭에 나옵니다. 데이터셋은 LeRobot v3.0 형식이어야 합니다.</p>
+      받은 데이터셋은 데이터 › 데이터셋, 모델은 학습 › 모델에 나옵니다. 데이터셋은 LeRobot v3.0 형식이어야 합니다.</p>
       <div id=mine class=muted style="margin-top:6px"></div>
     </div>
     {jobs_html}
@@ -5402,7 +5578,7 @@ def api_runstream(jid: str, cam: str):
 
 @app.post("/api/rollout/trial")
 async def api_rollout_trial(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     jid, res = b.get("job", ""), b.get("result", "")
     if not safe_name(jid) or res not in TRIAL_RESULTS + ("undo",):
         return JSONResponse({"error": "잘못된 요청"}, status_code=400)
@@ -5485,7 +5661,7 @@ ROLLOUT_RUN_BODY = """
     </div>
   </div>
 </div>
-<details style="margin-top:12px"><summary class=muted>로그</summary><pre id=tail>...</pre></details>
+<details id=logbox style="margin-top:12px"><summary class=muted>로그</summary><pre id=tail>...</pre></details>
 </div>
 """
 ROLLOUT_RUN_JS = """
@@ -5506,8 +5682,10 @@ window.trial=async function(r){
   refresh();
 };
 document.addEventListener('keydown',e=>{
-  if(e.target.tagName==='INPUT'||e.repeat) return;
-  const k=e.key.toLowerCase();
+  if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA'||e.repeat) return;
+  if(e.ctrlKey||e.metaKey||e.altKey) return;      // Ctrl+F(찾기)·Ctrl+S 가 실패·성공 기록이 되지 않게
+  // 한글 입력 상태·CapsLock 에서도 되도록 물리 키(code)로 봅니다
+  const k={KeyS:'s',KeyF:'f',KeyU:'u'}[e.code]||e.key.toLowerCase();
   if(k==='s') trial('success'); else if(k==='f') trial('fail'); else if(k==='u') trial('undo');
 });
 async function mount3d(){
@@ -5574,7 +5752,8 @@ async function refresh(){
   $('tck').textContent=ck.n?(ck.ok+' / '+ck.n+' ('+ck.rate+'%)'):'기록 없음';
   $('tail').textContent=(st.err?'!! '+st.err+'\\n\\n':'')+(d.tail||'');
   $('hint').style.display=d.hint?'':'none'; $('hint').textContent=d.hint?'원인 추정: '+d.hint:'';
-  if(d.hint) document.querySelector('details').open=true;
+  // 원인 추정이 처음 뜰 때 한 번만 로그를 펼칩니다 (매번 열면 닫을 수가 없음 · 첫 details 는 상단바 ☰ 메뉴라 id 로 고름)
+  if(d.hint && !window._logOpened){ window._logOpened=true; $('logbox').open=true; }
 }
 // 주기 갱신은 앞 요청이 끝난 뒤에 다음을 보냅니다 (서버가 느려도 요청이 쌓이지 않게)
 async function loop(){ await refresh(); setTimeout(loop, 500); }
@@ -5709,7 +5888,7 @@ async def api_rollout(req: Request):
     busy = exclusive_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 시작하세요"}, status_code=400)
-    b = await req.json()
+    b = await jbody(req)
     rel = b.get("ckpt", "")
     ck = (OUT_ROOT / rel).resolve()
     if not rel or not _within(ck, OUT_ROOT) or not (ck / "config.json").is_file():
@@ -5723,6 +5902,18 @@ async def api_rollout(req: Request):
     errs, _warns = policy_fit(rel)
     if errs:
         return JSONResponse({"error": " / ".join(errs)}, status_code=400)
+    # 수집 시작과 같은 확인 — 팔로워 캘리브레이션 파일이 없으면 lerobot 이 처음부터 캘리브레이션하려다(입력 대기) 멈춥니다
+    try:
+        _need_ports("follower")
+        if BIMANUAL:
+            bimanual_base_id("follower")
+    except (NotImplementedError, ValueError) as e:
+        return JSONResponse({"error": str(e)}, status_code=400)
+    missing = [f"{side}/follower" for side, roles in calib_status().items()
+               if not roles.get("follower", {}).get("ok")]
+    if missing:
+        return JSONResponse({"error": "캘리브레이션 없음: " + ", ".join(missing) + " — 캘리브레이션 탭에서 먼저"},
+                            status_code=400)
     if policy_needs_task(rel) and not (b.get("task") or "").strip():
         return JSONResponse({"error": "이 정책은 태스크 설명(언어 지시)을 씁니다 — 태스크 설명을 넣으세요"}, status_code=400)
     miss = plugin_missing() if BIMANUAL else []
@@ -5753,6 +5944,17 @@ async def api_rollout(req: Request):
         prob = ov_shape_problem(rel)
         if prob:
             return JSONResponse({"error": prob}, status_code=400)
+        # 변환 때 이 장치·정밀도로 잰 결과가 PyTorch 와 다르면(정합성 실패) 팔을 움직이기 전에 막습니다.
+        # 변환 때 없던 장치(측정 없음)는 그대로 둡니다 — 시작 로그의 대체 장치 안내를 봅니다.
+        r = ((st.get("meta") or {}).get("results") or {}).get(prec, {}).get(dev) or {}
+        if r.get("ok") is False:
+            return JSONResponse({"error": f"{dev} · {prec}: 변환 때 컴파일 실패 ({r.get('error') or '-'}) — "
+                                          "다른 장치·정밀도를 고르세요"}, status_code=400)
+        if r.get("ok") and r.get("parity") is False:
+            return JSONResponse({"error": f"{dev} · {prec}: 변환 때 PyTorch 와 결과가 크게 달랐습니다 "
+                                          f"(최대오차 {r.get('max_abs_units', '?')} 관절 단위) — "
+                                          "다른 장치·정밀도(FP16)를 고르거나 PyTorch 로 실행하세요"},
+                                status_code=400)
         conv = busy_with(("ovconvert",))
         if conv:
             return JSONResponse({"error": f"{conv['id']} 변환 중 — 끝난 뒤 시작하세요"}, status_code=400)
@@ -5784,7 +5986,7 @@ async def api_rollout(req: Request):
 
 @app.post("/api/delete_checkpoint")
 async def api_delete_checkpoint(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     rel = b.get("rel", "")
     scope = b.get("scope", "step")
     if "/checkpoints/" not in rel:
@@ -5808,6 +6010,8 @@ async def api_delete_checkpoint(req: Request):
         raw = OUT_ROOT / run
     else:
         step = rel.split("/checkpoints/")[1].split("/")[0]
+        if not safe_name(step):      # '' · '..' 이면 checkpoints 폴더나 실행 전체를 가리킵니다
+            return JSONResponse({"error": "체크포인트 경로 아님"}, status_code=400)
         if step == "last":
             return JSONResponse({"error": "last는 심볼릭 링크 — 숫자 체크포인트를 선택하세요"}, status_code=400)
         raw = OUT_ROOT / run / "checkpoints" / step
@@ -5865,6 +6069,8 @@ def control_page():
 <style>
 .cmain{{display:grid;grid-template-columns:360px 1fr;gap:0;height:calc(100vh - 52px)}}
 .cpanel{{border-right:1px solid var(--line);padding:18px;overflow-y:auto}}
+.cmain>*{{min-width:0}}
+#cst{{white-space:normal;overflow-wrap:anywhere;max-width:100%}}   /* 긴 연결 오류가 한 줄로 늘어나 패널·화면을 밀어내지 않게 */
 .armhead{{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;
 color:var(--dim);margin:14px 0 8px;border-bottom:1px solid var(--line);padding-bottom:4px}}
 .jrow{{margin-bottom:16px}}
@@ -5979,10 +6185,11 @@ function openWS(){{
     if(d.type==='init'){{
       if(d.error){{
         // 새로고침 직후에는 직전 페이지의 연결 정리가 아직 안 끝났을 수 있어 한 번만 다시 시도합니다
-        if(d.code==='owner'&&!window._wsRetried){{ window._wsRetried=true; wsErr='잠시 후 다시 연결합니다…'; setTimeout(openWS,1500); return; }}
+        // 새로고침 직후엔 이전 연결의 정리(팔 해제·진행 중이던 리더 연결 마무리)가 몇 초 걸릴 수 있어 몇 번 더 시도합니다
+        if(d.code==='owner'&&(window._wsRetried||0)<5){{ window._wsRetried=(window._wsRetried||0)+1; wsErr='잠시 후 다시 연결합니다…'; setTimeout(openWS,1500); return; }}
         wsErr=d.error; setStatus(d.error,'b-bad'); return;
       }}
-      window._wsRetried=false;
+      window._wsRetried=0;
       SIDES.forEach(s=>buildSliders(s, d.arms[s].limits, d.arms[s].actual));
       setStatus('연결됨','b-ok');
       btrq.disabled=false; bflw.disabled=false;
@@ -6242,7 +6449,7 @@ async def ws_control(sock: WebSocket):
         busy_msg, code = "", ""
         if (busy_with(("record", "rollout")) or WATCH.on or CALIB.active or MOTORSETUP.active
                 or ARMCHECK.active or VERIFY.active):
-            busy_msg = "record/rollout/Setup/Calib 사용 중 — 제어 불가"
+            busy_msg = "수집·실행·셋업·캘리브레이션 중 — 제어 불가"
         elif CTL_OWNER is not None:
             busy_msg, code = "다른 브라우저가 제어 중입니다", "owner"
         else:
@@ -6270,43 +6477,71 @@ async def ws_control(sock: WebSocket):
         }))
 
         synced = False   # 토크 토글 직후 슬라이더 동기화 신호 1회
+        # E-STOP 은 줄 서지 않습니다. 토크·팔로우 명령은 전용 스레드 하나에서 차례로 돌리고(리더 연결은 수 초 걸릴 수 있음)
+        # 그동안에도 메시지를 계속 읽어, E-STOP 이 오면 바로 처리합니다. stop["n"] 은 E-STOP(또는 탭 종료) 횟수 —
+        # 진행 중이던 토크 켜기·팔로우 켜기는 이 값이 바뀌었으면 더 켜지 않습니다(팔 잠금 안에서 확인).
+        stop = {"n": 0}
+        cmd_pool = concurrent.futures.ThreadPoolExecutor(max_workers=1, thread_name_prefix="ctl-cmd")
+        cmd_futs = set()
 
-        def _set_torque_all(on):
+        def _alive(n0):
+            return lambda: stop["n"] == n0
+
+        def _set_torque_all(on, n0=None):
             # 팔마다 따로 — 한 팔이 실패해도 나머지 팔은 반드시 처리합니다
             errs = []
             for a in ARMS.values():
+                if on and n0 is not None and stop["n"] != n0:
+                    break
                 try:
-                    a.set_torque(on)
+                    a.set_torque(on, allow=_alive(n0) if on and n0 is not None else None)
                 except Exception as e:
                     errs.append(f"{a.side}: {e}")
             if errs:
                 raise RuntimeError(" / ".join(errs))
 
+        def _torque_off_parallel():
+            # 팔마다 스레드 — 전원이 빠진 팔(쓰기 재시도로 수 초)이 다른 팔의 토크 해제를 늦추지 않게
+            errs = []
+
+            def off(a):
+                try:
+                    a.set_torque(False)
+                except Exception as e:
+                    errs.append(f"{a.side}: {e}")
+            ths = [threading.Thread(target=off, args=(a,), daemon=True) for a in ARMS.values()]
+            for t in ths:
+                t.start()
+            for t in ths:
+                t.join()
+            return errs
+
         def _estop():
             # 팔로워 토크부터 끕니다. 리더 정리는 그다음 (전원 없는 리더는 응답 대기로 늦어질 수 있음)
             for a in ARMS.values():
                 a.follow = False
-            err = None
-            try:
-                _set_torque_all(False)
-            except Exception as e:
-                err = e
+            errs = _torque_off_parallel()
             _leaders_off()
-            if err:
-                raise err
+            if errs:
+                raise RuntimeError(" / ".join(errs))
 
         def _leaders_off():
             for side, ldr in LEADERS.items():
                 ARMS[side].follow = False
                 ldr.disconnect()
 
-        def _follow_on():
+        def _follow_on(n0):
             for side, ldr in LEADERS.items():
+                if stop["n"] != n0:
+                    return
                 if not ldr.connected:
                     ldr.connect()
-                if not ARMS[side].torque:
-                    ARMS[side].set_torque(True)
-                ARMS[side].follow = True
+                arm = ARMS[side]
+                if not arm.torque:
+                    arm.set_torque(True, allow=_alive(n0))
+                with arm.lock:
+                    if stop["n"] == n0 and arm.torque:
+                        arm.follow = True
 
         for side, arm in ARMS.items():
             arm.start_loop(LEADERS[side])
@@ -6317,8 +6552,25 @@ async def ws_control(sock: WebSocket):
         def _note(e):
             note.update(m=str(e), t=time.monotonic())
 
-        async def rx():
+        def _run_cmd(kind_, on, n0):
             nonlocal synced
+            try:
+                if kind_ == "torque":
+                    _set_torque_all(on, n0)
+                elif on:
+                    _follow_on(n0)
+                else:
+                    _leaders_off()
+                synced = True
+            except Exception as e:
+                _note(e)
+                if kind_ == "follow" and on:
+                    try:
+                        _leaders_off()
+                    except Exception:
+                        pass
+
+        async def rx():
             async for msg in sock.iter_text():
                 try:
                     d = json.loads(msg)
@@ -6327,47 +6579,39 @@ async def ws_control(sock: WebSocket):
                 if not isinstance(d, dict):
                     continue
                 kind = d.get("type")
-                if kind == "target":
-                    arm = ARMS.get(d.get("side"))
-                    js_ = d.get("joints")
-                    if arm and arm.health_stop:
-                        continue                   # 서보 상태 이상으로 멈춘 동안은 슬라이더 명령을 받지 않음
-                    if arm and isinstance(js_, dict):
-                        for k, v in js_.items():
-                            if k in CTL_JOINTS:
-                                try:
-                                    arm.target[k] = float(v)
-                                except (TypeError, ValueError):
-                                    pass
-                elif kind == "torque":
-                    try:
-                        await asyncio.to_thread(_set_torque_all, bool(d.get("on")))
-                        synced = True
-                    except Exception as e:
-                        _note(e)
-                elif kind == "estop":
-                    try:
-                        await asyncio.to_thread(_estop)
-                    except Exception as e:
-                        _note(e)
-                elif kind == "follow":
-                    on = bool(d.get("on"))
-                    try:
-                        if on:
-                            await asyncio.to_thread(_follow_on)
-                        else:
-                            await asyncio.to_thread(_leaders_off)
-                        synced = True
-                    except Exception as e:
-                        _note(e)
+                try:
+                    if kind == "target":
+                        arm = ARMS.get(d.get("side")) if isinstance(d.get("side"), str) else None
+                        js_ = d.get("joints")
+                        if arm and arm.health_stop:
+                            continue                   # 서보 상태 이상으로 멈춘 동안은 슬라이더 명령을 받지 않음
+                        if arm and isinstance(js_, dict):
+                            for k, v in js_.items():
+                                if k in CTL_JOINTS:
+                                    try:
+                                        arm.target[k] = float(v)
+                                    except (TypeError, ValueError):
+                                        pass
+                    elif kind == "estop":
+                        stop["n"] += 1
+                        for a in ARMS.values():
+                            a.follow = False           # 스레드를 기다리기 전에 팔로우부터 멈춤
                         try:
-                            await asyncio.to_thread(_leaders_off)
-                        except Exception:
-                            pass
+                            await asyncio.to_thread(_estop)
+                        except Exception as e:
+                            _note(e)
+                    elif kind in ("torque", "follow"):
+                        f = cmd_pool.submit(_run_cmd, kind, bool(d.get("on")), stop["n"])
+                        cmd_futs.add(f)
+                        f.add_done_callback(cmd_futs.discard)
+                except Exception as e:                 # 한 메시지의 오류로 명령 수신이 멈추면 E-STOP 도 안 들어갑니다
+                    _note(e)
 
         rx_task = asyncio.create_task(rx())
         try:
             while True:
+                if rx_task.done():         # 연결이 끊겼거나 수신이 멈춤 — 정리로 넘어갑니다
+                    break
                 t0 = time.monotonic()
                 # 양팔이면 어느 팔에서 난 오류인지 앞에 붙입니다 (한쪽만 안 될 때 원인을 가리기 쉽게)
                 err = " / ".join((f"{a.side}: {a.err}" if BIMANUAL else a.err) for a in ARMS.values() if a.err)
@@ -6391,13 +6635,17 @@ async def ws_control(sock: WebSocket):
         def _cleanup():
             global CTL_OWNER
             try:
-                CAMS.close()              # 탭 이탈 = 카메라 해제
+                stop["n"] += 1            # 진행 중인 토크·팔로우 켜기가 더 켜지 않게
+                for arm in ARMS.values():
+                    arm.follow = False
                 for arm in ARMS.values():
                     arm.stop_loop()
                 for arm in ARMS.values():
-                    arm.disconnect()      # 토크 해제 + 시리얼 해제 (팔로워 먼저)
+                    arm.disconnect()      # 토크 해제 + 시리얼 해제 (팔로워 먼저 — 카메라 정리보다도 먼저)
+                cmd_pool.shutdown(wait=True)   # 진행 중이던 리더 연결이 끝난 뒤에 리더를 닫아야 포트가 남지 않습니다
                 for ldr in LEADERS.values():
                     ldr.disconnect()
+                CAMS.close()              # 탭 이탈 = 카메라 해제
             finally:
                 CTL_OWNER = None          # 정리가 끝난 뒤에야 다른 작업이 포트를 잡을 수 있습니다
         # 시리얼 재시도·스레드 join 이 이벤트 루프를 몇 초씩 막지 않도록 스레드에서 돌립니다.
@@ -6651,14 +6899,15 @@ def api_setup_ports():
 
 @app.get("/api/setup/cameras")
 def api_setup_cameras():
-    if CAMS.on or busy_with(("record", "rollout")):
-        return JSONResponse({"error": "카메라 사용 중 — Control/수집을 먼저 종료하세요"}, status_code=400)
+    # 제어 탭은 팔을 먼저 연결하고(약 1초) 카메라를 엽니다 — 그 사이(CTL_OWNER 만 잡힌 상태)에 스캔이 카메라를 잡으면 제어 탭이 못 엽니다
+    if CAMS.on or CTL_OWNER is not None or busy_with(("record", "rollout")):
+        return JSONResponse({"error": "카메라 사용 중 — 제어 탭·수집·실행을 먼저 종료하세요"}, status_code=400)
     return {"cameras": list_video_devices()}
 
 
 @app.post("/api/setup/probe")
 async def api_setup_probe(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
@@ -6675,7 +6924,7 @@ async def api_setup_probe(req: Request):
 
 @app.post("/api/setup/watch")
 async def api_setup_watch_start(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     ports = [p for p in (b.get("ports") or []) if serial_path_ok(p)]
     if not ports:
         return JSONResponse({"error": "감시할 포트가 없습니다"}, status_code=400)
@@ -6713,7 +6962,7 @@ def api_motors_state():
 
 @app.post("/api/setup/motors/start")
 async def api_motors_start(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
@@ -6731,9 +6980,11 @@ async def api_motors_start(req: Request):
 
 
 @app.post("/api/setup/motors/write")
-async def api_motors_write():
+async def api_motors_write(req: Request):
+    b = await jbody(req)
+    expect = b.get("name") if isinstance(b.get("name"), str) else None
     try:
-        await asyncio.to_thread(MOTORSETUP.write_current)
+        await asyncio.to_thread(MOTORSETUP.write_current, expect)
         MOTORSETUP.err = ""
     except Exception as e:
         MOTORSETUP.err = f"{type(e).__name__}: {e}"
@@ -6754,7 +7005,7 @@ def api_armcheck_state():
 
 @app.post("/api/setup/armcheck/start")
 async def api_armcheck_start(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     port = (b.get("port") or "").strip()
     if not serial_path_ok(port):
         return JSONResponse({"error": P.serial_port_hint()}, status_code=400)
@@ -6855,7 +7106,7 @@ def api_wizard_state():
 
 @app.post("/api/wizard/assign")
 async def api_wizard_assign(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role, dev = b.get("side"), b.get("role"), (b.get("dev") or "").strip()
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -6882,7 +7133,7 @@ async def api_wizard_assign(req: Request):
 
 @app.post("/api/wizard/verify/start")
 async def api_wizard_verify_start(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -6920,7 +7171,7 @@ async def api_wizard_verify_torque_off():
 
 @app.post("/api/wizard/verified")
 async def api_wizard_verified(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -7022,7 +7273,7 @@ def import_board_calibration(side, role):
 
 @app.post("/api/wizard/import_calib")
 async def api_wizard_import_calib(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -7100,7 +7351,7 @@ def apply_calib_copies(plan):
 
 @app.post("/api/wizard/mode")
 async def api_wizard_mode(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     mode = b.get("mode")
     if mode not in ("single", "bimanual"):
         return JSONResponse({"error": "mode 는 single 또는 bimanual"}, status_code=400)
@@ -7140,7 +7391,7 @@ def convert_robot(cfg, robot):
 
 @app.post("/api/wizard/robot")
 async def api_wizard_robot(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     robot = b.get("robot")
     if robot not in ROBOT_KINDS:
         return JSONResponse({"error": f"robot 은 {' / '.join(ROBOT_KINDS)} 중 하나"}, status_code=400)
@@ -7168,7 +7419,7 @@ async def api_setup_config(req: Request):
     busy = robot_busy()
     if busy:
         return JSONResponse({"error": f"{busy['id']} 실행 중 — 종료 후 저장하세요"}, status_code=400)
-    b = await req.json()
+    b = await jbody(req)
     cfg = b.get("config")
     err = validate_config(cfg)
     if err:
@@ -7231,25 +7482,25 @@ async def _env_op(fn, *args, needs_idle=True):
 
 @app.post("/api/envs/activate")
 async def api_env_activate(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     return await _env_op(activate_env, (b.get("name") or "").strip())
 
 
 @app.post("/api/envs/save_as")
 async def api_env_save_as(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     return await _env_op(save_env_as, (b.get("name") or "").strip())
 
 
 @app.post("/api/envs/rename")
 async def api_env_rename(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     return await _env_op(rename_env, (b.get("name") or "").strip(), (b.get("new") or "").strip())
 
 
 @app.post("/api/envs/delete")
 async def api_env_delete(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     name = (b.get("name") or "").strip()
     # 쓰는 중인 환경을 지우면 다른 환경으로 바뀌므로, 팔을 쓰는 작업이 있으면 막습니다
     return await _env_op(delete_env, name, needs_idle=(name == env_name()))
@@ -8069,7 +8320,7 @@ async function stepDiag(s){
     +(rep.power&&rep.power.system?' · 전원 '+E(rep.power.system)+' 계통 (중앙값 '+rep.power.median_v+' V)':(volts.length?' · '+Math.min.apply(null,volts).toFixed(1)+' V':''))+'</p>';
   const b=s.board||{};
   if(W.calib_kind!=='factory') h+='<p style="margin:0 0 10px">보드 캘리브레이션: '+({calibrated:badge('저장돼 있음','b-ok'),default:badge('없음 (공장값)','b-warn'),partial:badge('일부만','b-warn'),unknown:badge('모름')})[b.calib||'unknown']
-    +(s.calib.ok?' · 파일 '+({match:badge('보드와 일치','b-ok'),mismatch:badge('보드와 다름: '+(b.diff||[]).join(', '),'b-warn')})[b.file]||'':'')+'</p>';
+    +(s.calib.ok?' · 파일 '+(({match:badge('보드와 일치','b-ok'),mismatch:badge('보드와 다름: '+(b.diff||[]).join(', '),'b-warn')})[b.file]||''):'')+'</p>';
   let tbl='<table><tr><th>ID</th><th>관절</th><th class=num>전압</th><th class=num>온도</th><th class=num>흔들림</th><th>결과</th></tr>';
   Object.keys(rep.motors).forEach(j=>{ const m=rep.motors[j];
     tbl+='<tr><td class=mono>'+m.id+'</td><td class=mono>'+E(j)+'</td><td class=num>'+(m.voltage_v==null?'-':m.voltage_v.toFixed(1)+' V')+'</td>'
@@ -8110,7 +8361,7 @@ async function msPoll(){
       +(m.err?'<p class="badge b-bad"></p>':'')+(m.last?'<p class=tiny>'+E(m.last)+'</p>':'')
       +'<div class=toolbar><button class=primary id=wmsw>ID 쓰기</button><button id=wmsc>취소</button></div>';
     if(m.err) b.querySelector('.b-bad').textContent=m.err;
-    $('wmsw').onclick=async()=>{ $('wmsw').disabled=true; await jpost('/api/setup/motors/write'); msPoll(); };
+    $('wmsw').onclick=async()=>{ $('wmsw').disabled=true; await jpost('/api/setup/motors/write',{name:m.current}); msPoll(); };
     $('wmsc').onclick=async()=>{ MSING=false; await jpost('/api/setup/motors/cancel'); go('diag'); };
   }else if(m.stage==='done'){
     b.innerHTML='<p class="badge b-ok">6개 모두 ID 기록 완료 — 모터를 전부 다시 연결하고 다시 진단하세요</p>';
@@ -8746,7 +8997,7 @@ async function msStart(){
 }
 async function msWrite(){
   const b=document.querySelector('#msbox button.primary'); if(b) b.disabled=true;
-  const r=await jpost('/api/setup/motors/write'); msRefresh();
+  const r=await jpost('/api/setup/motors/write',{name:MS&&MS.current}); msRefresh();
 }
 async function msCancel(){ await jpost('/api/setup/motors/cancel'); msRefresh(); }
 async function msRefresh(){
@@ -8800,7 +9051,7 @@ function envPaint(d){
 }
 const ENV_RE=/^[A-Za-z0-9._-]+$/;
 async function envActivate(name){
-  if(!confirm('환경을 "'+name+'" 로 전환합니다. 저장하지 않은 Setup 변경은 사라집니다.')) return;
+  if(!confirm('환경을 "'+name+'" 로 전환합니다. 저장하지 않은 셋업 변경은 사라집니다.')) return;
   const r=await jpost('/api/envs/activate',{name:name});
   if(r.error){ alert(r.error); return; }
   location.reload();
@@ -9164,17 +9415,16 @@ class CalibSession:
         if kind()["calib"] != "range":
             raise RuntimeError(f"{kind()['label']} 은 범위 기록 캘리브레이션이 없습니다 — '공장값 쓰기' 를 쓰세요")
         dev = make_arm(role, arm)
-        self.old_calib = dict(dev.calibration) if dev.calibration else None
+        # 취소하면 되돌릴 값 = 연결 전 '보드' 의 캘리브레이션. 파일 값으로 잡으면 파일이 없을 때(다른 PC 에서 캘리브레이션한 팔)
+        # 아무것도 못 되돌리고, 팔로워는 연결하며 파일 값을 먼저 써서 원래 보드 값이 사라집니다.
+        board = {}
         # calibrate=True 면 input() 에서 멈춥니다. 팔로워는 Goal=현재 위치로 맞춘 뒤 configure 해서
         # 연결 순간 이전 목표로 튀지 않게 합니다 (connect_follower 참고)
         if role == "follower":
-            connect_follower(dev)
+            connect_follower(dev, board_calib=board)
         else:
-            try:
-                dev.connect(calibrate=False)
-            except Exception:
-                close_arm(dev, disable_torque=False)
-                raise
+            connect_leader(dev, board_calib=board)
+        self.old_calib = dict(board) if board else (dict(dev.calibration) if dev.calibration else None)
         try:
             from lerobot.motors.feetech import OperatingMode
             # configure() 의 torque_disabled() 가 끝나며 토크를 다시 켜므로 여기서 확실히 끕니다
@@ -9398,7 +9648,7 @@ def api_calib_files():
 async def api_calib_delete(req: Request):
     """캘리브레이션 파일 하나를 지웁니다. 실수로 지워도 되돌릴 수 있게 같은 폴더에 .json.bak 으로 옮깁니다
     (목록·lerobot 은 *.json 만 보므로 지운 것과 같습니다)."""
-    b = await req.json()
+    b = await jbody(req)
     d, cid = b.get("dir") or "", b.get("id") or ""
     if d not in CALIB_DIRS or not safe_name(cid):
         return JSONResponse({"error": "폴더·캘리브 id 가 잘못됐습니다"}, status_code=400)
@@ -9424,7 +9674,8 @@ def api_calib_export():
         for f in calib_files():
             z.write(CALIB_ROOT / f["dir"] / f"{f['id']}.json", f"{f['dir']}/{f['id']}.json")
     import platform
-    name = f"openmimic_calib_{platform.node()}_{time.strftime('%Y%m%d_%H%M')}.zip"
+    host = re.sub(r"[^A-Za-z0-9._-]", "_", platform.node()) or "pc"      # 헤더는 latin-1 — 한글 PC 이름이면 500
+    name = f"openmimic_calib_{host}_{time.strftime('%Y%m%d_%H%M')}.zip"
     return Response(buf.getvalue(), media_type="application/zip",
                     headers={"Content-Disposition": f'attachment; filename="{name}"', "Cache-Control": "no-store"})
 
@@ -9499,7 +9750,7 @@ def api_calib_state():
 
 @app.post("/api/calib/start")
 async def api_calib_start(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role = b.get("side"), b.get("role")
     if role not in ("follower", "leader") or side not in ARM_CFGS:
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -9552,7 +9803,7 @@ def factory_calibrate(side, role):
 
 @app.post("/api/calib/factory")
 async def api_calib_factory(req: Request):
-    b = await req.json()
+    b = await jbody(req)
     side, role = b.get("side"), b.get("role")
     if side not in ARM_CFGS or role not in ("follower", "leader"):
         return JSONResponse({"error": "side/role 이 잘못됨"}, status_code=400)
@@ -10089,13 +10340,14 @@ def worker_record(jid):
     alive = {"on": True}
 
     def poll_cmd():
-        f = rd / "cmd"
+        f = rd / "cmd"          # 예전 판의 한 파일 큐도 계속 받습니다
         while alive["on"]:
             try:
-                txt = P.take_file(f)
-                for ch in txt or "":
-                    on_key(ch)
-                    print(f"[openmimic-worker] key {ch}", flush=True)
+                for path in [f] + sorted(rd.glob("cmd.*.k")):     # 이름 = 보낸 시각 순
+                    txt = P.take_file(path)
+                    for ch in txt or "":
+                        on_key(ch)
+                        print(f"[openmimic-worker] key {ch}", flush=True)
             except OSError:
                 pass
             time.sleep(0.05)
@@ -10117,6 +10369,21 @@ def worker_record(jid):
 
     dataset = robot = teleop = preview = None
     rc = 0
+    released = {"done": False}
+
+    def release_arms():
+        """팔로워 토크 해제 + 포트 닫기, 리더도 닫기. 한 번만 합니다.
+        양팔에서 한쪽만 연결된 채 실패해도 is_connected 가 False 라 disconnect() 를 건너뛰므로 팔별로 닫습니다."""
+        if released["done"]:
+            return
+        released["done"] = True
+        if robot is not None:
+            for d in ([robot.left_arm, robot.right_arm] if hasattr(robot, "left_arm") else [robot]):
+                close_arm(d)
+        if teleop is not None:
+            for d in ([teleop.left_arm, teleop.right_arm] if hasattr(teleop, "left_arm") else [teleop]):
+                close_arm(d, disable_torque=kind(spec)["leader_torque"])   # OMX 리더는 그리퍼 토크를 끔
+
     try:
         # torch 까지 끌려와서 첫 실행은 수십 초 걸립니다 — 단계를 화면에 알려 줍니다.
         put(phase="importing")
@@ -10238,62 +10505,60 @@ def worker_record(jid):
             ui["start"] = False
 
         with VideoEncodingManager(dataset):
-            recorded = 0
-            last = ""
-            while not events["stop_recording"]:
-                idle(last)                       # 사람이 '녹화 시작' 을 누를 때까지 기다립니다
-                if events["stop_recording"]:
-                    break
-                enc_drops["n"] = 0               # 이 에피소드에서 빠진 프레임만 셉니다
-                put(phase="record", episode=dataset.num_episodes, recorded=recorded,
-                    t0=time.time(), phase_len=ept, last="")
-                logging.info(f"Recording episode {dataset.num_episodes}")
-                record_loop(robot=robot, events=events, fps=fps,
-                            teleop_action_processor=tap, robot_action_processor=rap,
-                            robot_observation_processor=rop, teleop=teleop, dataset=dataset,
-                            control_time_s=ept, single_task=task)
-                # 녹화 중 '수집 끝내기' → 진행 중이던 에피소드는 버립니다.
-                # 살리고 싶으면 '저장하고 다음' 을 먼저 누르면 됩니다.
-                if events["rerecord_episode"] or events["stop_recording"]:
-                    logging.info("Discard episode")
-                    events["rerecord_episode"] = False
-                    events["exit_early"] = False
-                    dataset.clear_episode_buffer()
-                    last = "버림"
-                    continue
-                # 시작 직후 바로 '저장하고 다음' → 프레임 0개. save_episode 가 예외를 내므로 건너뜁니다
-                if not dataset.has_pending_frames():
-                    dataset.clear_episode_buffer()
-                    last = "빈 에피소드 — 저장 안 함"
-                    continue
-                if enc_drops["n"]:
-                    logging.warning("영상 인코더가 못 따라가 프레임이 빠졌습니다 — 이 에피소드를 버립니다")
-                    dataset.clear_episode_buffer()
-                    enc_drops["n"] = 0
-                    last = "버림 — 영상 압축이 못 따라가 프레임이 빠짐 (카메라 해상도를 낮추거나 '바로 압축' 을 끄세요)"
-                    continue
-                put(phase="saving", t0=None)
-                ts = time.monotonic()
-                dataset.save_episode()
-                dt = time.monotonic() - ts
-                logging.info(f"episode {dataset.num_episodes - 1} 저장 {dt:.1f}s (영상 인코딩 포함)")
-                recorded += 1
-                last = f"episode {dataset.num_episodes - 1} 저장 ({dt:.0f}초)"
-                put(recorded=recorded)
+            try:
+                recorded = 0
+                last = ""
+                while not events["stop_recording"]:
+                    idle(last)                       # 사람이 '녹화 시작' 을 누를 때까지 기다립니다
+                    if events["stop_recording"]:
+                        break
+                    enc_drops["n"] = 0               # 이 에피소드에서 빠진 프레임만 셉니다
+                    put(phase="record", episode=dataset.num_episodes, recorded=recorded,
+                        t0=time.time(), phase_len=ept, last="")
+                    logging.info(f"Recording episode {dataset.num_episodes}")
+                    record_loop(robot=robot, events=events, fps=fps,
+                                teleop_action_processor=tap, robot_action_processor=rap,
+                                robot_observation_processor=rop, teleop=teleop, dataset=dataset,
+                                control_time_s=ept, single_task=task)
+                    # 녹화 중 '수집 끝내기' → 진행 중이던 에피소드는 버립니다.
+                    # 살리고 싶으면 '저장하고 다음' 을 먼저 누르면 됩니다.
+                    if events["rerecord_episode"] or events["stop_recording"]:
+                        logging.info("Discard episode")
+                        events["rerecord_episode"] = False
+                        events["exit_early"] = False
+                        dataset.clear_episode_buffer()
+                        last = "버림"
+                        continue
+                    # 시작 직후 바로 '저장하고 다음' → 프레임 0개. save_episode 가 예외를 내므로 건너뜁니다
+                    if not dataset.has_pending_frames():
+                        dataset.clear_episode_buffer()
+                        last = "빈 에피소드 — 저장 안 함"
+                        continue
+                    if enc_drops["n"]:
+                        logging.warning("영상 인코더가 못 따라가 프레임이 빠졌습니다 — 이 에피소드를 버립니다")
+                        dataset.clear_episode_buffer()
+                        enc_drops["n"] = 0
+                        last = "버림 — 영상 압축이 못 따라가 프레임이 빠짐 (카메라 해상도를 낮추거나 '바로 압축' 을 끄세요)"
+                        continue
+                    put(phase="saving", t0=None)
+                    ts = time.monotonic()
+                    dataset.save_episode()
+                    dt = time.monotonic() - ts
+                    logging.info(f"episode {dataset.num_episodes - 1} 저장 {dt:.1f}s (영상 인코딩 포함)")
+                    recorded += 1
+                    last = f"episode {dataset.num_episodes - 1} 저장 ({dt:.0f}초)"
+                    put(recorded=recorded)
+            finally:
+                # 팔부터 놓습니다 — with 를 빠져나가며 VideoEncodingManager 가 finalize(영상 마무리)를 하는 동안
+                # 팔로워가 토크가 걸린 채(리더도 안 따라감) 남지 않게, 그리고 두 번째 '중지'(SIGKILL)에도 토크가 남지 않게.
+                release_arms()
     except Exception as e:
         logging.exception("record worker failed")
         put(phase="error", err=f"{type(e).__name__}: {e}")
         rc = 1
     finally:
         alive["on"] = False
-        # 팔부터 놓습니다 — finalize 가 길어지는 동안 두 번째 '중지'(SIGKILL)가 와도 토크가 남지 않게.
-        # 양팔에서 한쪽만 연결된 채 실패해도 is_connected 가 False 라 disconnect() 를 건너뛰므로 팔별로 닫습니다.
-        if robot is not None:
-            for d in ([robot.left_arm, robot.right_arm] if hasattr(robot, "left_arm") else [robot]):
-                close_arm(d)
-        if teleop is not None:
-            for d in ([teleop.left_arm, teleop.right_arm] if hasattr(teleop, "left_arm") else [teleop]):
-                close_arm(d, disable_torque=kind(spec)["leader_torque"])   # OMX 리더는 그리퍼 토크를 끔
+        release_arms()      # 녹화 루프 전에 실패했으면 여기서 (이미 놓았으면 아무것도 안 함)
         if preview is not None:
             preview.stop()
         put(phase="finalizing", t0=None)
@@ -10576,7 +10841,9 @@ document.addEventListener('keydown',e=>{
   if(e.target.tagName==='INPUT'||e.target.tagName==='TEXTAREA')return;
   if(e.ctrlKey||e.metaKey||e.altKey||e.repeat)return;      // Ctrl+R(새로고침) 이 '버리고 다시' 로 가지 않게
   if(AC&&AC.state==='suspended') AC.resume();
-  if(['s','n','r'].includes(e.key)){ key(e.key); return; } // 단계에 맞지 않는 키는 워커가 무시합니다
+  // 한글 입력 상태('ㄴ')·CapsLock('S') 에서도 되도록 물리 키(code)로 봅니다. 단계에 맞지 않는 키는 워커가 무시합니다
+  const lk={KeyS:'s',KeyN:'n',KeyR:'r'}[e.code];
+  if(lk){ key(lk); return; }
   // 큰 키 한 벌: Space/→ = 다음 단계(대기→녹화, 녹화→저장), ←/Backspace = 버리고 다시, Esc = 수집 끝내기
   if(e.key===' '||e.key==='ArrowRight'){ e.preventDefault(); if(PH==='ready') key('s'); else if(PH==='record') key('n'); }
   else if(e.key==='ArrowLeft'||e.key==='Backspace'){ e.preventDefault(); if(PH==='record') key('r'); }

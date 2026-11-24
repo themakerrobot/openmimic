@@ -44,7 +44,7 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 위에서 돌아�
   변환할 때 PyTorch 대비 오차와 추론 시간을 장치별로 재서 보여 줍니다.
 - **Windows 네이티브** — WSL 없이 Ubuntu 와 같은 기능. 데이터셋 · 캘리브레이션 · 모델을 두 OS 사이에 그대로 옮깁니다.
 - **한팔도 양팔도** — SO-ARM101 · ROBOTIS OMX 를 한팔 · 양팔로. 전환은 버튼 하나.
-- **학습은 원하는 곳에서** — 내 PC 의 NVIDIA GPU · Jetson Thor · Intel 내장 GPU. 오래 걸리면 Hugging Face 클라우드 GPU(HF Jobs)를
+- **학습은 원하는 곳에서** — 내 PC 의 Intel 내장 GPU · NVIDIA GPU · Jetson Thor. 오래 걸리면 Hugging Face 클라우드 GPU(HF Jobs)를
   그때만 시간 단위로 빌립니다 (T4 시간당 $0.40 부터, 학습 화면에 요금 표시 — 이때만 데이터셋이 내 계정의 비공개 저장소로 올라갑니다).
 - **팔을 지키는 안전장치** — 시작 전 전원 점검으로 어댑터 혼용을 막고, 실행 중 서보 온도 · 전압을 감시해 이상하면 자동 정지.
 - **좋은 데이터** — 실제 수집 주기 표시, 카메라 동기 재생 · 3D · 관절 그래프로 에피소드 리뷰, 불량 에피소드 일괄 삭제, 끊긴 데이터셋 복구.
@@ -57,7 +57,7 @@ HuggingFace [lerobot](https://github.com/huggingface/lerobot) 위에서 돌아�
 |---|---|
 | 로봇팔 | **SO-ARM101** (Feetech STS3215) · **ROBOTIS OMX** (Dynamixel) — 한팔 / 양팔 |
 | OS | **Ubuntu** 22.04 · 24.04 · 26.04 · **Windows** 10 · 11 (네이티브) |
-| 학습 | 온디바이스: NVIDIA GPU · Jetson Thor · Intel 내장 GPU(XPU) · 선택: HF Jobs 클라우드 GPU(시간 단위) |
+| 학습 | 온디바이스: Intel 내장 GPU(XPU) · NVIDIA GPU · Jetson Thor · 선택: HF Jobs 클라우드 GPU(시간 단위) |
 | 실행 (온디바이스) | Intel Core Ultra **NPU** / GPU / CPU (OpenVINO FP16 · INT8) · NVIDIA GPU · Jetson Thor |
 | 정책 | ACT · ACT2 · Diffusion · SmolVLA — [비교](docs/POLICIES.md) |
 

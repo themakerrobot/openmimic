@@ -20,6 +20,9 @@ PIDF="${DIR}/openmimic_server.pid"
 LOGF="${DIR}/openmimic.log"
 PORT=8080
 UNIT="openmimic.service"
+UNITDIR="${HOME}/.config/systemd/user"
+
+service_active() { systemctl --user is-active --quiet "${UNIT}" 2>/dev/null; }
 
 need_env() {
   if [[ ! -f "${DIR}/activate.sh" ]]; then
@@ -41,7 +44,11 @@ need_env() {
 running_pid() {
   local p
   p="$(cat "${PIDF}" 2>/dev/null)"
-  if [[ -n "${p}" ]] && kill -0 "${p}" 2>/dev/null && tr '\0' ' ' < "/proc/${p}/cmdline" 2>/dev/null | grep -q "main.py"; then
+  # pid 가 재사용됐거나 다른 폴더의 OpenMimic 이면 끄지 않도록: 명령줄(main.py, --worker 아님)과 작업 폴더를 함께 봅니다
+  if [[ -n "${p}" ]] && kill -0 "${p}" 2>/dev/null \
+     && tr '\0' ' ' < "/proc/${p}/cmdline" 2>/dev/null | grep -q "main.py" \
+     && ! tr '\0' ' ' < "/proc/${p}/cmdline" 2>/dev/null | grep -q -- "--worker" \
+     && [[ "$(readlink -f "/proc/${p}/cwd" 2>/dev/null)" == "$(readlink -f "${DIR}")" ]]; then
     echo "${p}"
   fi
 }
@@ -57,7 +64,7 @@ do_start() {
   local p
   p="$(running_pid)"
   if [[ -n "${p}" ]]; then echo "이미 켜져 있습니다 (pid ${p})"; urls; return 0; fi
-  if systemctl --user is-active --quiet "${UNIT}" 2>/dev/null; then
+  if service_active; then
     echo "자동 시작 서비스로 켜져 있습니다 — ./openmimic.sh status 로 확인하세요"; return 0
   fi
   need_env
@@ -77,7 +84,7 @@ do_start() {
 
 do_stop() {
   local p
-  if systemctl --user is-active --quiet "${UNIT}" 2>/dev/null; then
+  if service_active; then
     systemctl --user stop "${UNIT}" && echo "자동 시작 서비스를 껐습니다 (다음 로그인 때 다시 켜집니다)"
   fi
   p="$(running_pid)"
@@ -94,7 +101,7 @@ do_status() {
   p="$(running_pid)"
   if [[ -n "${p}" ]]; then
     echo "켜져 있음 (pid ${p})"; urls
-  elif systemctl --user is-active --quiet "${UNIT}" 2>/dev/null; then
+  elif service_active; then
     echo "켜져 있음 (자동 시작 서비스)"; urls
   else
     echo "꺼져 있음 — ./openmimic.sh start"
@@ -108,24 +115,15 @@ do_update() {
     echo "고친 파일이 있어 업데이트를 멈춥니다 — git status 로 확인하세요"; exit 1
   fi
   git pull --ff-only || { echo "git pull 실패 — 위 메시지를 확인하세요"; exit 1; }
-  if systemctl --user is-active --quiet "${UNIT}" 2>/dev/null; then
-    systemctl --user restart "${UNIT}" && echo "업데이트 후 다시 켰습니다 (자동 시작 서비스)"; urls
-  else
-    do_stop; do_start
-  fi
+  do_restart
   echo "브라우저는 강력 새로고침(Ctrl+Shift+R) 하세요"
 }
 
-do_autostart() {
-  local unitdir="${HOME}/.config/systemd/user"
-  case "${1:-}" in
-    on)
-      if ! command -v systemctl >/dev/null; then echo "systemd 가 없는 시스템입니다"; exit 1; fi
-      if ! systemctl --user show-environment >/dev/null 2>&1; then
-        echo "이 계정의 systemd 사용자 세션에 연결하지 못했습니다 — 바탕화면으로 로그인한 터미널에서 다시 해 보세요"; exit 1
-      fi
-      mkdir -p "${unitdir}"
-      cat > "${unitdir}/${UNIT}" <<EOF
+write_unit() {
+  # KillMode=process: 서비스를 끄거나 다시 켤 때 main.py 만 끕니다. 기본값(control-group)이면 같은 cgroup 의
+  # 수집·학습 작업 프로세스까지 함께 죽어, 다시 켠 뒤 작업 탭에서 이어 볼 수 없습니다 (nohup 실행과 같게).
+  mkdir -p "${UNITDIR}"
+  cat > "${UNITDIR}/${UNIT}" <<EOF
 [Unit]
 Description=OpenMimic (${DIR})
 After=network-online.target
@@ -133,6 +131,7 @@ After=network-online.target
 [Service]
 Type=simple
 ExecStart=/bin/bash -c 'source "${DIR}/activate.sh" && cd "${DIR}" && exec python -u main.py'
+KillMode=process
 Restart=on-failure
 RestartSec=5
 StandardOutput=append:${LOGF}
@@ -141,7 +140,33 @@ StandardError=append:${LOGF}
 [Install]
 WantedBy=default.target
 EOF
-      systemctl --user daemon-reload
+  systemctl --user daemon-reload
+}
+
+# 예전 버전이 만든 서비스 파일(KillMode 없음)을 지금 내용으로 바꿉니다
+refresh_unit() {
+  if [[ -f "${UNITDIR}/${UNIT}" ]] && ! grep -q "^KillMode=process" "${UNITDIR}/${UNIT}"; then
+    write_unit && echo "자동 시작 서비스 파일을 새 버전으로 바꿨습니다 (KillMode=process)"
+  fi
+}
+
+do_restart() {
+  if service_active; then
+    refresh_unit
+    systemctl --user restart "${UNIT}" && echo "다시 켰습니다 (자동 시작 서비스)"; urls
+  else
+    do_stop; do_start
+  fi
+}
+
+do_autostart() {
+  case "${1:-}" in
+    on)
+      if ! command -v systemctl >/dev/null; then echo "systemd 가 없는 시스템입니다"; exit 1; fi
+      if ! systemctl --user show-environment >/dev/null 2>&1; then
+        echo "이 계정의 systemd 사용자 세션에 연결하지 못했습니다 — 바탕화면으로 로그인한 터미널에서 다시 해 보세요"; exit 1
+      fi
+      write_unit
       do_stop >/dev/null 2>&1
       systemctl --user enable --now "${UNIT}" && echo "자동 시작을 켰습니다 — 이 계정으로 로그인하면 OpenMimic 이 켜집니다"
       if loginctl show-user "${USER:-$(id -un)}" -p Linger 2>/dev/null | grep -q "yes"; then
@@ -152,7 +177,7 @@ EOF
       ;;
     off)
       systemctl --user disable --now "${UNIT}" 2>/dev/null
-      rm -f "${unitdir}/${UNIT}"; systemctl --user daemon-reload 2>/dev/null
+      rm -f "${UNITDIR}/${UNIT}"; systemctl --user daemon-reload 2>/dev/null
       echo "자동 시작을 껐습니다"
       ;;
     *) echo "사용법: ./openmimic.sh autostart on | off"; exit 1 ;;
@@ -162,7 +187,7 @@ EOF
 case "${1:-}" in
   start)     do_start ;;
   stop)      do_stop ;;
-  restart)   do_stop; do_start ;;
+  restart)   do_restart ;;
   status)    do_status ;;
   log)       tail -n 50 -f "${LOGF}" ;;
   update)    do_update ;;

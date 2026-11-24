@@ -5,5 +5,5 @@ rem Other commands from cmd: OpenMimic.bat update ^| restart ^| stop ^| status ^
 cd /d "%~dp0"
 set "OM_CMD=%*"
 if "%OM_CMD%"=="" set "OM_CMD=start"
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openmimic.ps1" %OM_CMD%
-if errorlevel 1 pause
+rem One line on purpose: "update" runs git pull, which may rewrite this file while cmd is still reading it.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0openmimic.ps1" %OM_CMD% & (if errorlevel 1 pause) & exit /b

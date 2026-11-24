@@ -98,6 +98,10 @@ log()  { echo -e "\n[$(date '+%F %T')] === $* ==="; }
 warn() { echo "[$(date '+%F %T')] !! $*"; }
 die()  { echo "[$(date '+%F %T')] XX 치명적 실패: $*"; exit 1; }
 trap 'warn "line ${LINENO} 오류. 로그: ${LOGFILE}"' ERR
+# 내려받은 설치 파일·임시 제약 파일은 이 실행만의 임시 폴더에 둡니다 — /tmp 의 고정 이름은
+# 다른 계정이 먼저 만들어 두면(같은 PC 를 여럿이 쓰는 실습실) 덮어쓰지 못해 설치가 멈춥니다
+TMPD="$(mktemp -d)"
+trap 'rm -rf "${TMPD}"' EXIT
 
 log "시작. arch=${ARCH} platform=${PLATFORM} 작업경로=${WORKDIR}"
 [[ -f "${WORKDIR}/main.py" ]] || die "${WORKDIR}/main.py 가 없습니다. 이 레포를 ~/project/openmimic 에 clone 한 뒤 실행하세요"
@@ -140,9 +144,9 @@ fi
 # --------------------------------------------------------------- 1. miniforge
 log "1. miniforge 설치"
 if [[ ! -d "${CONDA_DIR}" ]]; then
-  curl -fsSL -o /tmp/miniforge.sh \
+  curl -fsSL -o "${TMPD}/miniforge.sh" \
     "https://github.com/conda-forge/miniforge/releases/latest/download/${MINIFORGE}"
-  bash /tmp/miniforge.sh -b -p "${CONDA_DIR}"
+  bash "${TMPD}/miniforge.sh" -b -p "${CONDA_DIR}"
 else
   echo "이미 설치됨: ${CONDA_DIR}"
 fi
@@ -156,7 +160,8 @@ log "2. conda 환경 생성 (python ${PY_VER})"
 if conda env list | grep -qE "^${ENV_NAME}\s"; then
   echo "환경 이미 존재: ${ENV_NAME}"
 else
-  conda create -n "${ENV_NAME}" "python=${PY_VER}" -y -q
+  # ~/.condarc 에 defaults 채널이 있어도 conda-forge 만 씁니다 (install.ps1 과 같게 — defaults 는 이용 약관 확인을 요구합니다)
+  conda create -n "${ENV_NAME}" "python=${PY_VER}" -y -q --override-channels -c conda-forge
 fi
 conda activate "${ENV_NAME}"
 python -V
@@ -237,15 +242,15 @@ log "4-1. lerobot[feetech,dynamixel,training,diffusion,smolvla] 설치 (torch �
 # torch 를 pip 기본 인덱스 것으로 덮어쓰지 않도록 현재 버전으로 핀.
 # 로컬 버전 꼬리표(+cu130 / +cpu)는 뗍니다 — 붙어 있으면 pip 가 "Cannot install None" 으로 해석을 포기합니다.
 # (PEP 440: 'torch==2.11.0' 은 설치된 2.11.0+cu130 을 그대로 만족합니다)
-python - <<'PY' > /tmp/torch-constraint.txt
+python - <<'PY' > "${TMPD}/torch-constraint.txt"
 import torch, torchvision
 print(f"torch=={torch.__version__.split('+')[0]}")
 print(f"torchvision=={torchvision.__version__.split('+')[0]}")
 PY
-cat /tmp/torch-constraint.txt
+cat "${TMPD}/torch-constraint.txt"
 # feetech = SO-ARM101 (STS3215), dynamixel = ROBOTIS OMX (XL430/XL330)
 # diffusion / smolvla = 학습 탭에서 고를 수 있는 정책 (diffusers / transformers)
-PIP_CONSTRAINT=/tmp/torch-constraint.txt pip install -e ".[feetech,dynamixel,training,diffusion,smolvla]" \
+PIP_CONSTRAINT="${TMPD}/torch-constraint.txt" pip install -e ".[feetech,dynamixel,training,diffusion,smolvla]" \
   || die "lerobot 설치 실패 (로그 확인)"
 
 # torchcodec 은 Jetson 에서 문제를 일으켜 pyav 디코딩으로 통일합니다 (README 와 동일)
@@ -259,7 +264,7 @@ pip install "fastapi<1.0" uvicorn "websockets>=12"
 log "4-3. 플러그인 — 양팔 OMX (bi_omx_follower / bi_omx_leader) · ACT2 정책 (act2)"
 # lerobot 에 없는 것들을 이 레포의 plugins/ 에서 설치합니다. 설치된 패키지 이름이
 # lerobot_robot_* / lerobot_teleoperator_* / lerobot_policy_* 이면 lerobot-record/rollout/train 이 자동으로 읽습니다.
-PIP_CONSTRAINT=/tmp/torch-constraint.txt pip install --no-deps \
+PIP_CONSTRAINT="${TMPD}/torch-constraint.txt" pip install --no-deps \
   -e "${WORKDIR}/plugins/lerobot_robot_bi_omx" -e "${WORKDIR}/plugins/lerobot_teleoperator_bi_omx" \
   -e "${WORKDIR}/plugins/lerobot_policy_act2" \
   || die "플러그인 설치 실패"
@@ -269,7 +274,7 @@ check_cuda || die "lerobot 설치 과정에서 torch 휠이 바뀌었습니다. 
 
 if [[ "${PLATFORM}" == "intel" ]]; then
   log "4-5. OpenVINO / NNCF (Intel NPU·GPU·CPU 추론)"
-  PIP_CONSTRAINT=/tmp/torch-constraint.txt pip install "openvino>=2025.4" "nncf>=2.19" \
+  PIP_CONSTRAINT="${TMPD}/torch-constraint.txt" pip install "openvino>=2025.4" "nncf>=2.19" \
     || die "openvino 설치 실패"
 
   log "4-6. Intel NPU / GPU 드라이버 점검 (NPU 사용자 공간 드라이버는 설치하지 않습니다 — 안내만)"
